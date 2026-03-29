@@ -4,8 +4,8 @@
  * @module
  */
 
-/** The default commit types allowed by this package. */
-export const ALLOWED_TYPE_LIST = [
+/** Commit types mirrored from `@commitlint/config-conventional`. */
+export const COMMITLINT_TYPE_LIST = [
   "build",
   "chore",
   "ci",
@@ -19,19 +19,19 @@ export const ALLOWED_TYPE_LIST = [
   "test",
 ] as const;
 
-/** A `Set` view of {@link ALLOWED_TYPE_LIST} for membership checks. */
-export const ALLOWED_TYPES = new Set(ALLOWED_TYPE_LIST);
+/** A `Set` view of {@link COMMITLINT_TYPE_LIST} for membership checks. */
+export const COMMITLINT_TYPES = new Set(COMMITLINT_TYPE_LIST);
 
-/** The maximum length allowed for the first line of a commit message. */
-export const HEADER_MAX_LENGTH = 100 as const;
-/** The maximum length allowed for body lines. */
-export const BODY_MAX_LINE_LENGTH = 100 as const;
-/** The maximum length allowed for footer lines. */
-export const FOOTER_MAX_LINE_LENGTH = 100 as const;
+/** The maximum header length mirrored from `@commitlint/config-conventional`. */
+export const COMMITLINT_HEADER_MAX_LENGTH = 100 as const;
+/** The maximum body line length mirrored from `@commitlint/config-conventional`. */
+export const COMMITLINT_BODY_MAX_LINE_LENGTH = 100 as const;
+/** The maximum footer line length mirrored from `@commitlint/config-conventional`. */
+export const COMMITLINT_FOOTER_MAX_LINE_LENGTH = 100 as const;
 
 /** Matches a Conventional Commits header and captures its structured parts. */
 export const HEADER_PATTERN =
-  /^(?<type>[a-zA-Z]+)(?:\((?<scope>[^()]+)\))?(?<breaking>!)?:[ \t]+(?<subject>.+)$/;
+  /^(?<type>[A-Za-z][A-Za-z-]*)(?:\((?<scope>[^()]+)\))?(?<breaking>!)?:[ \t]+(?<subject>.+)$/;
 /** Matches Git comment lines such as those found in `.git/COMMIT_EDITMSG`. */
 export const GIT_COMMENT_PATTERN = /^#(?: |$)/;
 /** Matches footer lines like `Refs: #123` or `BREAKING CHANGE: ...`. */

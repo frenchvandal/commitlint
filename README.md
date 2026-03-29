@@ -6,7 +6,9 @@ Workers.
 ## Features
 
 - Compatible with Deno, Node, Bun, and Cloudflare Workers.
-- Mirrors the default rules from `@commitlint/config-conventional`.
+- Defaults to the core Conventional Commits specification.
+- Provides an optional `commitlint` preset that mirrors
+  `@commitlint/config-conventional`.
 - Publishes a library-only surface to JSR.
 
 ## Install
@@ -34,11 +36,31 @@ console.log(report.valid); // true
 console.log(formatReport(report));
 ```
 
+Use a non-default preset:
+
+```ts
+import { lintCommit } from "jsr:@miscellaneous/commitlint";
+
+const report = lintCommit("feature: add search", {
+  preset: "commitlint",
+});
+
+console.log(report.valid); // false
+console.log(report.errors[0]?.rule); // "type-enum"
+```
+
 ## API
 
-### `lintCommit(input: string): LintReport`
+### `lintCommit(input: string, options?: { preset?: "conventional-commits" | "commitlint" }): LintReport`
 
 Validate a commit message and return a structured lint report.
+
+Available presets:
+
+- `conventional-commits` (default): validates the generic Conventional Commits
+  structure.
+- `commitlint`: mirrors the default rules from
+  `@commitlint/config-conventional`.
 
 ### `formatReport(report: LintReport, options?: { color?: boolean }): string`
 

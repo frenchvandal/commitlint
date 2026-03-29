@@ -13,6 +13,13 @@ Deno.test("parseHeader extracts type, scope, and breaking marker", () => {
   });
 });
 
+Deno.test("parseHeader accepts hyphenated types", () => {
+  const parsed = parseHeader("release-candidate(api): ship it");
+
+  assertEquals(parsed?.type, "release-candidate");
+  assertEquals(parsed?.scope, "api");
+});
+
 Deno.test("parseHeader returns undefined for invalid headers", () => {
   assertEquals(parseHeader("feat add search endpoint"), undefined);
 });

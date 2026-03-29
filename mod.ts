@@ -19,6 +19,8 @@
 export type {
   FormatOptions,
   LintIssue,
+  LintOptions,
+  LintPreset,
   LintReport,
   Severity,
 } from "./src/types.ts";

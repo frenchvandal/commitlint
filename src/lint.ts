@@ -5,16 +5,18 @@
  */
 
 import {
-  ALLOWED_TYPES,
-  BODY_MAX_LINE_LENGTH,
   CASED_LETTER_PATTERN,
-  FOOTER_MAX_LINE_LENGTH,
   FOOTER_PATTERN,
   GIT_COMMENT_PATTERN,
-  HEADER_MAX_LENGTH,
 } from "./constants.ts";
 import { parseHeader } from "./parse.ts";
-import type { LintIssue, LintReport } from "./types.ts";
+import { DEFAULT_LINT_PRESET, LINT_PRESET_CONFIGS } from "./presets.ts";
+import type {
+  LintIssue,
+  LintOptions,
+  LintPreset,
+  LintReport,
+} from "./types.ts";
 
 type CommitSections = {
   readonly cleaned: string;
@@ -76,18 +78,94 @@ function splitCommitMessage(input: string): CommitSections {
 }
 
 function hasDisallowedSubjectCase(subject: string): boolean {
-  if (!CASED_LETTER_PATTERN.test(subject)) return false;
+  const trimmed = subject.trimStart();
+  if (!CASED_LETTER_PATTERN.test(trimmed)) return false;
 
-  const first = subject[0];
+  const first = trimmed[0];
   return first !== undefined &&
     first === first.toUpperCase() &&
     first !== first.toLowerCase();
+}
+
+function addIssue(
+  issues: LintIssue[],
+  rule: string,
+  severity: LintIssue["severity"],
+  message: string,
+): void {
+  issues.push({ rule, severity, message });
+}
+
+function levenshteinDistance(left: string, right: string): number {
+  const previous = Array.from(
+    { length: right.length + 1 },
+    (_, index) => index,
+  );
+
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    let diagonal = previous[0] ?? 0;
+    previous[0] = leftIndex;
+
+    for (
+      let rightIndex = 1;
+      rightIndex <= right.length;
+      rightIndex += 1
+    ) {
+      const upper = previous[rightIndex] ?? 0;
+      const leftCost = previous[rightIndex - 1] ?? 0;
+      const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+
+      previous[rightIndex] = Math.min(
+        leftCost + 1,
+        upper + 1,
+        diagonal + cost,
+      );
+      diagonal = upper;
+    }
+  }
+
+  return previous[right.length] ?? 0;
+}
+
+function getClosestAllowedType(
+  type: string,
+  allowedTypes: ReadonlyArray<string>,
+): string | undefined {
+  const normalizedType = type.toLowerCase();
+  let suggestion: string | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const candidate of allowedTypes) {
+    const distance = levenshteinDistance(
+      normalizedType,
+      candidate.toLowerCase(),
+    );
+
+    if (distance < bestDistance) {
+      suggestion = candidate;
+      bestDistance = distance;
+    }
+  }
+
+  if (suggestion === undefined) return undefined;
+
+  const maxDistance = Math.max(
+    1,
+    Math.floor(Math.max(normalizedType.length, suggestion.length) / 2),
+  );
+
+  return bestDistance <= maxDistance ? suggestion : undefined;
+}
+
+function getLintPresetConfig(preset: LintPreset) {
+  return LINT_PRESET_CONFIGS[preset];
 }
 
 /**
  * Validate a commit message and return a structured lint report.
  *
  * @param input The raw commit message to lint.
+ * @param options Optional lint settings. Use `preset: "conventional-commits"` for the default specification-focused rules, or `preset: "commitlint"` to mirror `@commitlint/config-conventional`.
  * @returns A report containing the normalized input, errors, and warnings.
  *
  * @example
@@ -95,140 +173,173 @@ function hasDisallowedSubjectCase(subject: string): boolean {
  * import { lintCommit } from "@miscellaneous/commitlint";
  *
  * const report = lintCommit("feat: add search");
+ * const strictReport = lintCommit("feat: add search", {
+ *   preset: "commitlint",
+ * });
  *
  * console.log(report.valid); // true
- * console.log(report.errors.length); // 0
+ * console.log(strictReport.errors.length); // 0
  * ```
  */
-export function lintCommit(input: string): LintReport {
+export function lintCommit(
+  input: string,
+  options: LintOptions = {},
+): LintReport {
   const issues: LintIssue[] = [];
+  const preset = options.preset ?? DEFAULT_LINT_PRESET;
+  const rules = getLintPresetConfig(preset);
   const { body, bodyStart, cleaned, footer, footerStart, header, lines } =
     splitCommitMessage(input);
 
-  if (header.length > HEADER_MAX_LENGTH) {
-    issues.push({
-      rule: "header-max-length",
-      severity: "error",
-      message:
-        `Header must not exceed ${HEADER_MAX_LENGTH} characters (got ${header.length}).`,
-    });
+  if (
+    rules.headerMaxLength !== undefined &&
+    header.length > rules.headerMaxLength.max
+  ) {
+    addIssue(
+      issues,
+      "header-max-length",
+      rules.headerMaxLength.severity,
+      `Header must not exceed ${rules.headerMaxLength.max} characters (got ${header.length}).`,
+    );
   }
 
   if (header !== header.trim()) {
-    issues.push({
-      rule: "header-trim",
-      severity: "error",
-      message: "Header must not have leading or trailing whitespace.",
-    });
+    addIssue(
+      issues,
+      "header-trim",
+      "error",
+      "Header must not have leading or trailing whitespace.",
+    );
   }
 
   const parsed = parseHeader(header);
 
   if (parsed === undefined) {
-    issues.push({
-      rule: "header-pattern",
-      severity: "error",
-      message:
-        `Header does not match Conventional Commits format: "<type>[optional scope]: <description>". Got: "${header}"`,
-    });
+    addIssue(
+      issues,
+      "header-pattern",
+      "error",
+      `Header does not match Conventional Commits format: "<type>[optional scope]: <description>". Got: "${header}"`,
+    );
   } else {
     if (
-      !ALLOWED_TYPES.has(parsed.type as Parameters<typeof ALLOWED_TYPES.has>[0])
+      rules.typeEnum !== undefined &&
+      !rules.typeEnum.allowedTypes.some((allowedType) =>
+        allowedType === parsed.type
+      )
     ) {
-      issues.push({
-        rule: "type-enum",
-        severity: "error",
-        message: `Type "${parsed.type}" is not allowed. Allowed types: ${
-          [...ALLOWED_TYPES].join(", ")
-        }.`,
-      });
+      const suggestion = rules.typeEnum.suggest
+        ? getClosestAllowedType(parsed.type, rules.typeEnum.allowedTypes)
+        : undefined;
+      const suggestionMessage = suggestion === undefined
+        ? ""
+        : ` Did you mean "${suggestion}"?`;
+
+      addIssue(
+        issues,
+        "type-enum",
+        rules.typeEnum.severity,
+        `Type "${parsed.type}" is not allowed. Allowed types: ${
+          rules.typeEnum.allowedTypes.join(", ")
+        }.${suggestionMessage}`,
+      );
     }
 
-    if (parsed.type !== parsed.type.toLowerCase()) {
-      issues.push({
-        rule: "type-case",
-        severity: "error",
-        message: `Type "${parsed.type}" must be lower-case.`,
-      });
+    if (
+      rules.typeCase !== undefined &&
+      parsed.type !== parsed.type.toLowerCase()
+    ) {
+      addIssue(
+        issues,
+        "type-case",
+        rules.typeCase.severity,
+        `Type "${parsed.type}" must be lower-case.`,
+      );
     }
 
     if (parsed.type.trim().length === 0) {
-      issues.push({
-        rule: "type-empty",
-        severity: "error",
-        message: "Type must not be empty.",
-      });
+      addIssue(issues, "type-empty", "error", "Type must not be empty.");
     }
 
     if (parsed.subject.trim().length === 0) {
-      issues.push({
-        rule: "subject-empty",
-        severity: "error",
-        message: "Subject must not be empty.",
-      });
+      addIssue(issues, "subject-empty", "error", "Subject must not be empty.");
     }
 
-    if (parsed.subject.trimEnd().endsWith(".")) {
-      issues.push({
-        rule: "subject-full-stop",
-        severity: "error",
-        message: 'Subject must not end with a full stop (".").',
-      });
+    if (
+      rules.subjectFullStop !== undefined &&
+      parsed.subject.trimEnd().endsWith(".")
+    ) {
+      addIssue(
+        issues,
+        "subject-full-stop",
+        rules.subjectFullStop.severity,
+        'Subject must not end with a full stop (".").',
+      );
     }
 
-    if (hasDisallowedSubjectCase(parsed.subject)) {
-      issues.push({
-        rule: "subject-case",
-        severity: "error",
-        message:
-          "Subject must not be sentence-case, start-case, pascal-case, or upper-case.",
-      });
+    if (
+      rules.subjectCase !== undefined &&
+      hasDisallowedSubjectCase(parsed.subject)
+    ) {
+      addIssue(
+        issues,
+        "subject-case",
+        rules.subjectCase.severity,
+        "Subject must not be sentence-case, start-case, pascal-case, or upper-case.",
+      );
     }
   }
 
-  for (const [index, line] of body.entries()) {
-    if (line.length > BODY_MAX_LINE_LENGTH) {
-      issues.push({
-        rule: "body-max-line-length",
-        severity: "error",
-        message: `Body line ${
-          index + bodyStart + 1
-        } must not exceed ${BODY_MAX_LINE_LENGTH} characters (got ${line.length}).`,
-      });
+  if (rules.bodyMaxLineLength !== undefined) {
+    for (const [index, line] of body.entries()) {
+      if (line.length > rules.bodyMaxLineLength.max) {
+        addIssue(
+          issues,
+          "body-max-line-length",
+          rules.bodyMaxLineLength.severity,
+          `Body line ${
+            index + bodyStart + 1
+          } must not exceed ${rules.bodyMaxLineLength.max} characters (got ${line.length}).`,
+        );
+      }
     }
   }
 
   if (body.length > 0 && lines[1] !== "") {
-    issues.push({
-      rule: "body-leading-blank",
-      severity: "warning",
-      message: "Body must be separated from the header by a blank line.",
-    });
+    addIssue(
+      issues,
+      "body-leading-blank",
+      rules.bodyLeadingBlank.severity,
+      "Body must be separated from the header by a blank line.",
+    );
   }
 
   if (footerStart !== undefined && lines[footerStart - 1] !== "") {
-    issues.push({
-      rule: "footer-leading-blank",
-      severity: "warning",
-      message:
-        "Footer must be separated from the preceding section by a blank line.",
-    });
+    addIssue(
+      issues,
+      "footer-leading-blank",
+      rules.footerLeadingBlank.severity,
+      "Footer must be separated from the preceding section by a blank line.",
+    );
   }
 
-  for (const [index, line] of footer.entries()) {
-    if (line.length > FOOTER_MAX_LINE_LENGTH) {
-      issues.push({
-        rule: "footer-max-line-length",
-        severity: "error",
-        message: `Footer line ${
-          index + footerStart! + 1
-        } must not exceed ${FOOTER_MAX_LINE_LENGTH} characters (got ${line.length}).`,
-      });
+  if (rules.footerMaxLineLength !== undefined) {
+    for (const [index, line] of footer.entries()) {
+      if (line.length > rules.footerMaxLineLength.max) {
+        addIssue(
+          issues,
+          "footer-max-line-length",
+          rules.footerMaxLineLength.severity,
+          `Footer line ${
+            index + footerStart! + 1
+          } must not exceed ${rules.footerMaxLineLength.max} characters (got ${line.length}).`,
+        );
+      }
     }
   }
 
-  const errors = issues.filter((i) => i.severity === "error");
-  const warnings = issues.filter((i) => i.severity === "warning");
+  const errors = issues.filter((issue) => issue.severity === "error");
+  const warnings = issues.filter((issue) => issue.severity === "warning");
 
   return {
     input: cleaned,

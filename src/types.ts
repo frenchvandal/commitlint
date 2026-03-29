@@ -7,6 +7,9 @@
 /** The severity level assigned to a lint issue. */
 export type Severity = "error" | "warning";
 
+/** Built-in lint presets supported by {@link lintCommit}. */
+export type LintPreset = "conventional-commits" | "commitlint";
+
 /** A single lint issue emitted by the validator. */
 export type LintIssue = {
   /** The stable rule identifier, such as `type-enum`. */
@@ -27,6 +30,20 @@ export type LintReport = {
   readonly errors: ReadonlyArray<LintIssue>;
   /** All warning-level issues found in the message. */
   readonly warnings: ReadonlyArray<LintIssue>;
+};
+
+/** Options for {@link lintCommit}. */
+export type LintOptions = {
+  /**
+   * The built-in rule preset to apply.
+   *
+   * Available presets:
+   * - `"conventional-commits"`: the default specification-focused rules
+   * - `"commitlint"`: mirrors `@commitlint/config-conventional`
+   *
+   * Defaults to `"conventional-commits"`.
+   */
+  readonly preset?: LintPreset;
 };
 
 /** Parsed data extracted from the commit header. */
