@@ -1,0 +1,36 @@
+{
+  "name": "@miscellaneous/commitlint",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Cross-runtime Conventional Commits linter for Deno, Node.js, Bun, and Cloudflare Workers.",
+  "exports": "./mod.ts",
+  "imports": {
+    "@miscellaneous/commitlint": "./mod.ts",
+    "@std/assert": "jsr:@std/assert@^1.0.19"
+  },
+  "tasks": {
+    "check": "deno fmt --check && deno lint && deno check mod.ts examples/worker.ts && deno task test",
+    "fmt": "deno fmt",
+    "lint": "deno lint",
+    "test": "deno task test:unit && deno task test:doc",
+    "test:unit": "deno test src/format_test.ts src/lint_test.ts src/parse_test.ts",
+    "test:doc": "deno test --doc mod.ts src/parse.ts src/lint.ts src/format.ts",
+    "coverage": "deno task coverage:text",
+    "coverage:collect": "deno test --doc --coverage=coverage --clean src/format_test.ts src/lint_test.ts src/parse_test.ts mod.ts src/parse.ts src/lint.ts src/format.ts",
+    "coverage:text": "deno task coverage:collect && deno coverage coverage",
+    "coverage:html": "deno task coverage:collect && deno coverage coverage --html",
+    "coverage:lcov": "deno task coverage:collect && deno coverage coverage --lcov --output=coverage.lcov",
+    "publish:dry-run": "deno publish --dry-run --allow-dirty"
+  },
+  "publish": {
+    "include": [
+      "mod.ts",
+      "src/**/*.ts",
+      "README.md",
+      "LICENSE.md"
+    ],
+    "exclude": [
+      "**/*_test.ts"
+    ]
+  }
+}

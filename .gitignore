@@ -1,0 +1,6 @@
+cli/
+coverage/
+coverage.lcov
+node_modules
+dist
+.DS_Store

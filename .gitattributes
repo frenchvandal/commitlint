@@ -1,0 +1,26 @@
+# Apply UTF-8 and LF to every file in the repository by default; binary assets opt out below.
+* text eol=lf working-tree-encoding=UTF-8
+
+# Windows-native scripts should keep CRLF if introduced later.
+*.bat text eol=crlf working-tree-encoding=UTF-8
+*.cmd text eol=crlf working-tree-encoding=UTF-8
+*.ps1 text eol=crlf working-tree-encoding=UTF-8
+
+# Common binary assets must never be line-normalized or re-encoded.
+*.png binary -working-tree-encoding
+*.jpg binary -working-tree-encoding
+*.jpeg binary -working-tree-encoding
+*.gif binary -working-tree-encoding
+*.webp binary -working-tree-encoding
+*.avif binary -working-tree-encoding
+*.ico binary -working-tree-encoding
+*.pdf binary -working-tree-encoding
+*.woff binary -working-tree-encoding
+*.woff2 binary -working-tree-encoding
+*.ttf binary -working-tree-encoding
+*.otf binary -working-tree-encoding
+*.mp3 binary -working-tree-encoding
+*.mp4 binary -working-tree-encoding
+*.webm binary -working-tree-encoding
+*.wasm binary -working-tree-encoding
+*.zip binary -working-tree-encoding
