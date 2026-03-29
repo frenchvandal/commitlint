@@ -1,0 +1,299 @@
+name: Compatibility
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_version:
+        description: Published package version to test
+        required: false
+        type: string
+  workflow_run:
+    workflows:
+      - Publish
+    types:
+      - completed
+
+env:
+  CF_COMPATIBILITY_DATE: "2026-03-29"
+  PACKAGE_NAME: "@miscellaneous/commitlint"
+
+concurrency:
+  group: compatibility-${{ github.event_name }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion
+      == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      bun_version: ${{ steps.runtime_versions.outputs.bun }}
+      deno_version: ${{ steps.runtime_versions.outputs.deno }}
+      node_version: ${{ steps.runtime_versions.outputs.node }}
+      package_version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - id: runtime_versions
+        name: Read runtime versions
+        run: |
+          bun=$(awk '$1 == "bun" { print $2 }' .tool-versions)
+          deno=$(awk '$1 == "deno" { print $2 }' .tool-versions)
+          node=$(awk '$1 == "nodejs" { print $2 }' .tool-versions)
+
+          echo "bun=$bun" >> "$GITHUB_OUTPUT"
+          echo "deno=$deno" >> "$GITHUB_OUTPUT"
+          echo "node=$node" >> "$GITHUB_OUTPUT"
+      - id: version
+        name: Read package version
+        run: |
+          manual_version="${{ github.event.inputs.package_version }}"
+          if [ -n "$manual_version" ]; then
+            value="$manual_version"
+          else
+            value=$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' deno.json | head -n 1)
+          fi
+          echo "value=$value" >> "$GITHUB_OUTPUT"
+
+  deno:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: ${{ needs.prepare.outputs.deno_version }}
+          cache: true
+      - name: Verify published package in Deno
+        run: |
+          cat > compat-deno.ts <<EOF
+          import {
+            formatReport,
+            lintCommit,
+          } from "jsr:${PACKAGE_NAME}@${{ needs.prepare.outputs.package_version }}";
+
+          const report = lintCommit("feat: add search");
+
+          if (!report.valid) {
+            throw new Error("The published package should accept a valid commit in Deno.");
+          }
+
+          if (!formatReport(report).includes("valid")) {
+            throw new Error("The formatted Deno report should mention validity.");
+          }
+          EOF
+          deno run compat-deno.ts
+
+  node:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ needs.prepare.outputs.node_version }}
+      - name: Verify published package in Node.js
+        run: |
+          mkdir -p compat/node
+          cd compat/node
+          cat > package.json <<'EOF'
+          {
+            "private": true,
+            "type": "module"
+          }
+          EOF
+          npx jsr add "${PACKAGE_NAME}@${{ needs.prepare.outputs.package_version }}"
+          cat > check.mjs <<'EOF'
+          import { formatReport, lintCommit } from "@miscellaneous/commitlint";
+
+          const report = lintCommit("feat: add search");
+
+          if (!report.valid) {
+            throw new Error("The published package should accept a valid commit in Node.js.");
+          }
+
+          if (!formatReport(report).includes("valid")) {
+            throw new Error("The formatted Node.js report should mention validity.");
+          }
+          EOF
+          node check.mjs
+
+  bun:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ needs.prepare.outputs.bun_version }}
+      - name: Verify published package in Bun
+        run: |
+          mkdir -p compat/bun
+          cd compat/bun
+          cat > package.json <<'EOF'
+          {
+            "private": true,
+            "type": "module"
+          }
+          EOF
+          bunx jsr add "${PACKAGE_NAME}@${{ needs.prepare.outputs.package_version }}"
+          cat > check.ts <<'EOF'
+          import { formatReport, lintCommit } from "@miscellaneous/commitlint";
+
+          const report = lintCommit("feat: add search");
+
+          if (!report.valid) {
+            throw new Error("The published package should accept a valid commit in Bun.");
+          }
+
+          if (!formatReport(report).includes("valid")) {
+            throw new Error("The formatted Bun report should mention validity.");
+          }
+          EOF
+          bun run check.ts
+
+  workers:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ needs.prepare.outputs.node_version }}
+      - name: Verify published package in Cloudflare Workers
+        run: |
+          mkdir -p compat/workers/src
+          cd compat/workers
+          cat > package.json <<'EOF'
+          {
+            "private": true,
+            "type": "module"
+          }
+          EOF
+          npx jsr add "${PACKAGE_NAME}@${{ needs.prepare.outputs.package_version }}"
+          npm install --no-save wrangler
+          cat > wrangler.jsonc <<EOF
+          {
+            "name": "compat-workers",
+            "main": "src/index.ts",
+            "compatibility_date": "${CF_COMPATIBILITY_DATE}"
+          }
+          EOF
+          cat > src/index.ts <<'EOF'
+          import { lintCommit } from "@miscellaneous/commitlint";
+
+          export default {
+            fetch(): Response {
+              const report = lintCommit("feat: add search");
+              return Response.json({ valid: report.valid });
+            },
+          };
+          EOF
+          npx wrangler dev --config wrangler.jsonc --ip 127.0.0.1 --port 8787 --local > wrangler.log 2>&1 &
+          echo $! > wrangler.pid
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787 > response.json; then
+              break
+            fi
+            sleep 2
+          done
+          node -e 'const response = JSON.parse(require("node:fs").readFileSync("response.json", "utf8")); if (!response.valid) throw new Error("The published package should accept a valid commit in Cloudflare Workers.");'
+      - name: Stop Wrangler
+        if: always()
+        run: |
+          if [ -f compat/workers/wrangler.pid ]; then
+            kill "$(cat compat/workers/wrangler.pid)" || true
+          fi
+
+  browsers:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ needs.prepare.outputs.node_version }}
+      - name: Verify published package in browsers
+        run: |
+          mkdir -p compat/browser
+          cd compat/browser
+          cat > package.json <<'EOF'
+          {
+            "private": true,
+            "type": "module"
+          }
+          EOF
+          npx jsr add "${PACKAGE_NAME}@${{ needs.prepare.outputs.package_version }}"
+          npm install --no-save @playwright/test vite
+          npx playwright install --with-deps chromium firefox webkit
+          cat > index.html <<'EOF'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>Compatibility Browser Fixture</title>
+            </head>
+            <body>
+              <main id="result">pending</main>
+              <script type="module" src="./main.js"></script>
+            </body>
+          </html>
+          EOF
+          cat > main.js <<'EOF'
+          import { lintCommit } from "@miscellaneous/commitlint";
+
+          const report = lintCommit("feat: add search");
+          const result = document.querySelector("#result");
+
+          if (result) {
+            result.textContent = report.valid ? "valid" : "invalid";
+          }
+          EOF
+          cat > playwright.config.mjs <<'EOF'
+          import { defineConfig } from "@playwright/test";
+
+          export default defineConfig({
+            testDir: ".",
+            testMatch: "compat.spec.mjs",
+            webServer: {
+              command: "npx vite --host 127.0.0.1 --port 4173",
+              url: "http://127.0.0.1:4173",
+              reuseExistingServer: false,
+            },
+            projects: [
+              {
+                name: "chromium",
+                use: { browserName: "chromium" },
+              },
+              {
+                name: "firefox",
+                use: { browserName: "firefox" },
+              },
+              {
+                name: "webkit",
+                use: { browserName: "webkit" },
+              },
+            ],
+          });
+          EOF
+          cat > compat.spec.mjs <<'EOF'
+          import { expect, test } from "@playwright/test";
+
+          test("the published package works in the browser bundle", async ({ page }) => {
+            await page.goto("/");
+            await expect(page.locator("#result")).toHaveText("valid");
+          });
+          EOF
+          npx playwright test

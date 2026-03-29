@@ -1,0 +1,43 @@
+name: Publish
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version-file: .tool-versions
+      - name: Publish package to JSR
+        run: deno publish
+      - name: Create source bundle for attestation
+        run: |
+          mkdir -p dist
+          git archive \
+            --format=tar.gz \
+            --output=dist/jsr-source.tar.gz \
+            HEAD \
+            LICENSE.md \
+            README.md \
+            deno.json \
+            mod.ts \
+            src
+      - name: Generate GitHub build provenance attestation
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/jsr-source.tar.gz

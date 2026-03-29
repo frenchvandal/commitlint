@@ -60,6 +60,15 @@ minimum, a Worker name, an entrypoint, and a `compatibility_date`.
 
 See `examples/worker.ts`.
 
+## Trust
+
+This package is published from GitHub Actions using JSR trusted publishing.
+According to JSR’s trust model, packages published from GitHub Actions with the
+native `jsr publish` or `deno publish` integration automatically receive a JSR
+provenance statement in the public transparency log. The publish workflow in
+this repository also generates a GitHub artifact attestation for the published
+source bundle.
+
 ## License
 
 MIT
