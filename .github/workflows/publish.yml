@@ -23,9 +23,11 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version-file: .tool-versions
-      - name: Publish package to JSR
+      - id: publish
+        name: Publish package to JSR
         run: deno publish
-      - name: Create source bundle for attestation
+      - id: bundle
+        name: Create source bundle for attestation
         run: |
           mkdir -p dist
           git archive \
@@ -37,7 +39,28 @@ jobs:
             deno.json \
             mod.ts \
             src
-      - name: Generate GitHub build provenance attestation
+      - id: attest
+        name: Generate GitHub build provenance attestation
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: dist/jsr-source.tar.gz
+      - name: Write publish summary
+        if: always()
+        run: |
+          deno_version=$(sed -n 's/^deno[[:space:]]\+\(.*\)$/\1/p' .tool-versions)
+          package_name=$(sed -n 's/.*"name": "\([^"]*\)".*/\1/p' deno.json | head -n 1)
+          package_version=$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' deno.json | head -n 1)
+
+          {
+            echo "## Publish Summary"
+            echo
+            echo "- Package: \`${package_name}@${package_version}\`"
+            echo "- Ref: \`${GITHUB_REF}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Deno: \`${deno_version}\`"
+            echo "- Publish step: \`${{ steps.publish.outcome }}\`"
+            echo "- Source bundle step: \`${{ steps.bundle.outcome }}\`"
+            echo "- GitHub attestation step: \`${{ steps.attest.outcome }}\`"
+            echo "- Source bundle: \`dist/jsr-source.tar.gz\`"
+            echo "- Job result: \`${{ job.status }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

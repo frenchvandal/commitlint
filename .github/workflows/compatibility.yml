@@ -14,7 +14,6 @@ on:
       - completed
 
 env:
-  CF_COMPATIBILITY_DATE: "2026-03-29"
   PACKAGE_NAME: "@miscellaneous/commitlint"
 
 concurrency:
@@ -27,24 +26,12 @@ jobs:
       == 'success'
     runs-on: ubuntu-latest
     outputs:
-      bun_version: ${{ steps.runtime_versions.outputs.bun }}
-      deno_version: ${{ steps.runtime_versions.outputs.deno }}
-      node_version: ${{ steps.runtime_versions.outputs.node }}
       package_version: ${{ steps.version.outputs.value }}
+      compatibility_date: ${{ steps.compatibility_date.outputs.value }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - id: runtime_versions
-        name: Read runtime versions
-        run: |
-          bun=$(awk '$1 == "bun" { print $2 }' .tool-versions)
-          deno=$(awk '$1 == "deno" { print $2 }' .tool-versions)
-          node=$(awk '$1 == "nodejs" { print $2 }' .tool-versions)
-
-          echo "bun=$bun" >> "$GITHUB_OUTPUT"
-          echo "deno=$deno" >> "$GITHUB_OUTPUT"
-          echo "node=$node" >> "$GITHUB_OUTPUT"
       - id: version
         name: Read package version
         run: |
@@ -55,6 +42,20 @@ jobs:
             value=$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' deno.json | head -n 1)
           fi
           echo "value=$value" >> "$GITHUB_OUTPUT"
+      - id: compatibility_date
+        name: Read Cloudflare compatibility date
+        run: echo "value=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Write preparation summary
+        run: |
+          {
+            echo "## Compatibility Preparation"
+            echo
+            echo "- Package: \`${PACKAGE_NAME}@${{ steps.version.outputs.value }}\`"
+            echo "- Cloudflare Workers compatibility date: \`${{ steps.compatibility_date.outputs.value }}\`"
+            echo "- Trigger: \`${{ github.event_name }}\`"
+            echo "- Ref: \`${GITHUB_REF}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   deno:
     needs: prepare
@@ -62,12 +63,16 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: ${{ needs.prepare.outputs.deno_version }}
+          deno-version-file: .tool-versions
           cache: true
-      - name: Verify published package in Deno
+      - id: verify
+        name: Verify published package in Deno
         run: |
           cat > compat-deno.ts <<EOF
           import {
@@ -86,6 +91,18 @@ jobs:
           }
           EOF
           deno run compat-deno.ts
+      - name: Write Deno summary
+        if: always()
+        run: |
+          deno_version=$(sed -n 's/^deno[[:space:]]\+\(.*\)$/\1/p' .tool-versions)
+
+          {
+            echo "## Deno Compatibility"
+            echo
+            echo "- Package: \`${PACKAGE_NAME}@${{ needs.prepare.outputs.package_version }}\`"
+            echo "- Deno: \`${deno_version}\`"
+            echo "- Result: \`${{ job.status }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   node:
     needs: prepare
@@ -93,11 +110,15 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ needs.prepare.outputs.node_version }}
-      - name: Verify published package in Node.js
+          node-version-file: .tool-versions
+      - id: verify
+        name: Verify published package in Node.js
         run: |
           mkdir -p compat/node
           cd compat/node
@@ -122,6 +143,18 @@ jobs:
           }
           EOF
           node check.mjs
+      - name: Write Node.js summary
+        if: always()
+        run: |
+          node_version=$(sed -n 's/^nodejs[[:space:]]\+\(.*\)$/\1/p' .tool-versions)
+
+          {
+            echo "## Node.js Compatibility"
+            echo
+            echo "- Package: \`${PACKAGE_NAME}@${{ needs.prepare.outputs.package_version }}\`"
+            echo "- Node.js: \`${node_version}\`"
+            echo "- Result: \`${{ job.status }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   bun:
     needs: prepare
@@ -129,11 +162,15 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: ${{ needs.prepare.outputs.bun_version }}
-      - name: Verify published package in Bun
+          bun-version-file: .tool-versions
+      - id: verify
+        name: Verify published package in Bun
         run: |
           mkdir -p compat/bun
           cd compat/bun
@@ -158,6 +195,18 @@ jobs:
           }
           EOF
           bun run check.ts
+      - name: Write Bun summary
+        if: always()
+        run: |
+          bun_version=$(sed -n 's/^bun[[:space:]]\+\(.*\)$/\1/p' .tool-versions)
+
+          {
+            echo "## Bun Compatibility"
+            echo
+            echo "- Package: \`${PACKAGE_NAME}@${{ needs.prepare.outputs.package_version }}\`"
+            echo "- Bun: \`${bun_version}\`"
+            echo "- Result: \`${{ job.status }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   workers:
     needs: prepare
@@ -165,11 +214,15 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ needs.prepare.outputs.node_version }}
-      - name: Verify published package in Cloudflare Workers
+          node-version-file: .tool-versions
+      - id: verify
+        name: Verify published package in Cloudflare Workers
         run: |
           mkdir -p compat/workers/src
           cd compat/workers
@@ -185,7 +238,7 @@ jobs:
           {
             "name": "compat-workers",
             "main": "src/index.ts",
-            "compatibility_date": "${CF_COMPATIBILITY_DATE}"
+            "compatibility_date": "${{ needs.prepare.outputs.compatibility_date }}"
           }
           EOF
           cat > src/index.ts <<'EOF'
@@ -200,19 +253,48 @@ jobs:
           EOF
           npx wrangler dev --config wrangler.jsonc --ip 127.0.0.1 --port 8787 --local > wrangler.log 2>&1 &
           echo $! > wrangler.pid
+          rm -f response.json
           for attempt in $(seq 1 30); do
+            echo "Waiting for Wrangler to serve requests (attempt ${attempt}/30)..."
             if curl -fsS http://127.0.0.1:8787 > response.json; then
               break
             fi
+
+            if ! kill -0 "$(cat wrangler.pid)" 2>/dev/null; then
+              echo "Wrangler exited before becoming ready."
+              cat wrangler.log
+              exit 1
+            fi
+
             sleep 2
           done
-          node -e 'const response = JSON.parse(require("node:fs").readFileSync("response.json", "utf8")); if (!response.valid) throw new Error("The published package should accept a valid commit in Cloudflare Workers.");'
+
+          if [ ! -f response.json ]; then
+            echo "Wrangler never became ready."
+            cat wrangler.log
+            exit 1
+          fi
+
+          node --input-type=module -e 'import { readFileSync } from "node:fs"; const response = JSON.parse(readFileSync("response.json", "utf8")); if (!response.valid) throw new Error("The published package should accept a valid commit in Cloudflare Workers.");'
       - name: Stop Wrangler
         if: always()
         run: |
           if [ -f compat/workers/wrangler.pid ]; then
             kill "$(cat compat/workers/wrangler.pid)" || true
           fi
+      - name: Write Cloudflare Workers summary
+        if: always()
+        run: |
+          node_version=$(sed -n 's/^nodejs[[:space:]]\+\(.*\)$/\1/p' .tool-versions)
+
+          {
+            echo "## Cloudflare Workers Compatibility"
+            echo
+            echo "- Package: \`${PACKAGE_NAME}@${{ needs.prepare.outputs.package_version }}\`"
+            echo "- Node.js: \`${node_version}\`"
+            echo "- Compatibility date: \`${{ needs.prepare.outputs.compatibility_date }}\`"
+            echo "- Result: \`${{ job.status }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   browsers:
     needs: prepare
@@ -220,11 +302,15 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ needs.prepare.outputs.node_version }}
-      - name: Verify published package in browsers
+          node-version-file: .tool-versions
+      - id: verify
+        name: Verify published package in browsers
         run: |
           mkdir -p compat/browser
           cd compat/browser
@@ -267,8 +353,11 @@ jobs:
           export default defineConfig({
             testDir: ".",
             testMatch: "compat.spec.mjs",
+            use: {
+              baseURL: "http://127.0.0.1:4173",
+            },
             webServer: {
-              command: "npx vite --host 127.0.0.1 --port 4173",
+              command: "npx vite --host 127.0.0.1 --port 4173 --strictPort",
               url: "http://127.0.0.1:4173",
               reuseExistingServer: false,
             },
@@ -292,8 +381,61 @@ jobs:
           import { expect, test } from "@playwright/test";
 
           test("the published package works in the browser bundle", async ({ page }) => {
-            await page.goto("/");
+            await page.goto("http://127.0.0.1:4173/");
             await expect(page.locator("#result")).toHaveText("valid");
           });
           EOF
           npx playwright test
+      - name: Write browser summary
+        if: always()
+        run: |
+          node_version=$(sed -n 's/^nodejs[[:space:]]\+\(.*\)$/\1/p' .tool-versions)
+
+          {
+            echo "## Browser Compatibility"
+            echo
+            echo "- Package: \`${PACKAGE_NAME}@${{ needs.prepare.outputs.package_version }}\`"
+            echo "- Node.js: \`${node_version}\`"
+            echo "- Browsers: \`chromium\`, \`firefox\`, \`webkit\`"
+            echo "- Result: \`${{ job.status }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  summary:
+    if: always()
+    needs:
+      - prepare
+      - deno
+      - node
+      - bun
+      - workers
+      - browsers
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - name: Write compatibility summary
+        run: |
+          deno_version=$(sed -n 's/^deno[[:space:]]\+\(.*\)$/\1/p' .tool-versions)
+          node_version=$(sed -n 's/^nodejs[[:space:]]\+\(.*\)$/\1/p' .tool-versions)
+          bun_version=$(sed -n 's/^bun[[:space:]]\+\(.*\)$/\1/p' .tool-versions)
+
+          {
+            echo "## Compatibility Summary"
+            echo
+            echo "- Package: \`${PACKAGE_NAME}@${{ needs.prepare.outputs.package_version }}\`"
+            echo "- Deno: \`${deno_version}\`"
+            echo "- Node.js: \`${node_version}\`"
+            echo "- Bun: \`${bun_version}\`"
+            echo "- Cloudflare Workers compatibility date: \`${{ needs.prepare.outputs.compatibility_date }}\`"
+            echo
+            echo "| Target | Result |"
+            echo "| --- | --- |"
+            echo "| Deno | \`${{ needs.deno.result }}\` |"
+            echo "| Node.js | \`${{ needs.node.result }}\` |"
+            echo "| Bun | \`${{ needs.bun.result }}\` |"
+            echo "| Cloudflare Workers | \`${{ needs.workers.result }}\` |"
+            echo "| Browsers | \`${{ needs.browsers.result }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

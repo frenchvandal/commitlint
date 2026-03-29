@@ -21,5 +21,20 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version-file: .tool-versions
-      - name: Run checks
+      - id: check
+        name: Run checks
         run: deno task check
+      - name: Write CI summary
+        if: always()
+        run: |
+          deno_version=$(sed -n 's/^deno[[:space:]]\+\(.*\)$/\1/p' .tool-versions)
+
+          {
+            echo "## CI Summary"
+            echo
+            echo "- Ref: \`${GITHUB_REF}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Deno: \`${deno_version}\`"
+            echo "- Command: \`deno task check\`"
+            echo "- Result: \`${{ job.status }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
