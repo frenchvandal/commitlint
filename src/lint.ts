@@ -323,7 +323,7 @@ export function lintCommit(
     );
   }
 
-  if (rules.footerMaxLineLength !== undefined) {
+  if (rules.footerMaxLineLength !== undefined && footerStart !== undefined) {
     for (const [index, line] of footer.entries()) {
       if (line.length > rules.footerMaxLineLength.max) {
         addIssue(
@@ -331,15 +331,23 @@ export function lintCommit(
           "footer-max-line-length",
           rules.footerMaxLineLength.severity,
           `Footer line ${
-            index + footerStart! + 1
+            index + footerStart + 1
           } must not exceed ${rules.footerMaxLineLength.max} characters (got ${line.length}).`,
         );
       }
     }
   }
 
-  const errors = issues.filter((issue) => issue.severity === "error");
-  const warnings = issues.filter((issue) => issue.severity === "warning");
+  const errors: LintIssue[] = [];
+  const warnings: LintIssue[] = [];
+
+  for (const issue of issues) {
+    if (issue.severity === "error") {
+      errors.push(issue);
+    } else {
+      warnings.push(issue);
+    }
+  }
 
   return {
     input: cleaned,

@@ -71,6 +71,29 @@ Deno.test("rejects malformed headers", () => {
   );
 });
 
+Deno.test("rejects empty input", () => {
+  const report = lintCommit("");
+
+  assertEquals(report.valid, false);
+  assertEquals(
+    report.errors.some((issue) => issue.rule === "header-pattern"),
+    true,
+  );
+});
+
+Deno.test("rejects inputs that only contain git comment lines", () => {
+  const report = lintCommit(
+    "# Please enter the commit message\n# on branch main",
+  );
+
+  assertEquals(report.input, "");
+  assertEquals(report.valid, false);
+  assertEquals(
+    report.errors.some((issue) => issue.rule === "header-pattern"),
+    true,
+  );
+});
+
 Deno.test("rejects headers with surrounding whitespace", () => {
   const report = lintCommit(" fix: add search support");
 
@@ -195,6 +218,22 @@ Deno.test("warns when the footer is not separated by a blank line with the commi
   assertEquals(
     report.warnings.some((issue) => issue.rule === "footer-leading-blank"),
     true,
+  );
+});
+
+Deno.test("treats a footer without a body as a footer when no blank line is present", () => {
+  const report = lintCommit("fix: handle edge case\nBREAKING CHANGE: x", {
+    preset: "commitlint",
+  });
+
+  assertEquals(report.errors, []);
+  assertEquals(
+    report.warnings.some((issue) => issue.rule === "footer-leading-blank"),
+    true,
+  );
+  assertEquals(
+    report.warnings.some((issue) => issue.rule === "body-leading-blank"),
+    false,
   );
 });
 

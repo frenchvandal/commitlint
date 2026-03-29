@@ -17,6 +17,12 @@ Deno.test("formatReport renders valid reports", () => {
   assertMatch(output, /commit message is valid/);
 });
 
+Deno.test("formatReport omits ANSI codes when color is disabled", () => {
+  const output = formatReport(VALID_REPORT, { color: false });
+
+  assertEquals(output.includes("\x1b["), false);
+});
+
 Deno.test("formatReport renders errors and warnings", () => {
   const output = formatReport({
     input: "wip: ship it",

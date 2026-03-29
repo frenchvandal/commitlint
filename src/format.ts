@@ -41,19 +41,19 @@ export function formatReport(
 ): string {
   const color = options.color === true;
 
-  const c = (code: string, text: string) =>
-    color ? `${code}${text}${RESET}` : text;
+  const style = (text: string, ...codes: string[]) =>
+    color ? `${codes.join("")}${text}${RESET}` : text;
 
   const lines: string[] = [];
   lines.push("");
-  lines.push(c(DIM, `  commit: ${report.input.split("\n")[0]}`));
+  lines.push(style(`  commit: ${report.input.split("\n")[0]}`, DIM));
   lines.push("");
 
   for (const issue of [...report.errors, ...report.warnings]) {
     const prefix = issue.severity === "error"
-      ? c(RED, "  ✖ error")
-      : c(YELLOW, "  ⚠ warning");
-    const rule = c(DIM, `  [${issue.rule}]`);
+      ? style("  ✖ error", RED)
+      : style("  ⚠ warning", YELLOW);
+    const rule = style(`  [${issue.rule}]`, DIM);
     lines.push(`${prefix}  ${issue.message}`);
     lines.push(rule);
     lines.push("");
@@ -63,16 +63,16 @@ export function formatReport(
   const warningCount = report.warnings.length;
 
   if (report.valid) {
-    lines.push(c(GREEN, `  ${BOLD}✔ commit message is valid${RESET}`));
+    lines.push(style("  ✔ commit message is valid", GREEN, BOLD));
   } else {
     lines.push(
-      c(
-        RED,
-        `  ${BOLD}✖ found ${errorCount} error${errorCount !== 1 ? "s" : ""}` +
+      style(
+        `  ✖ found ${errorCount} error${errorCount !== 1 ? "s" : ""}` +
           (warningCount > 0
             ? ` and ${warningCount} warning${warningCount !== 1 ? "s" : ""}`
-            : "") +
-          RESET,
+            : ""),
+        RED,
+        BOLD,
       ),
     );
   }

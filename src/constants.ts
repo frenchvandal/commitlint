@@ -19,9 +19,6 @@ export const COMMITLINT_TYPE_LIST = [
   "test",
 ] as const;
 
-/** A `Set` view of {@link COMMITLINT_TYPE_LIST} for membership checks. */
-export const COMMITLINT_TYPES = new Set(COMMITLINT_TYPE_LIST);
-
 /** The maximum header length mirrored from `@commitlint/config-conventional`. */
 export const COMMITLINT_HEADER_MAX_LENGTH = 100 as const;
 /** The maximum body line length mirrored from `@commitlint/config-conventional`. */
