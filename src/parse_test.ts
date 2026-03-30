@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 
-import { parseHeader } from "./parse.ts";
+import { parseHeader } from "../mod.ts";
 
 Deno.test("parseHeader extracts type, scope, and breaking marker", () => {
   const parsed = parseHeader("feat(api)!: add search endpoint");

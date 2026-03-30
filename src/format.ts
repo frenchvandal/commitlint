@@ -53,7 +53,10 @@ export function formatReport(
     const prefix = issue.severity === "error"
       ? style("  ✖ error", RED)
       : style("  ⚠ warning", YELLOW);
-    const rule = style(`  [${issue.rule}]`, DIM);
+    const location = issue.location === undefined
+      ? ""
+      : ` at ${issue.location.section} ${issue.location.line}:${issue.location.column}`;
+    const rule = style(`  [${issue.rule}]${location}`, DIM);
     lines.push(`${prefix}  ${issue.message}`);
     lines.push(rule);
     lines.push("");

@@ -54,3 +54,23 @@ Deno.test("formatReport includes ANSI codes when color is enabled", () => {
   assertEquals(output.includes("\x1b[32m"), true);
   assertEquals(output.includes("\x1b[1m"), true);
 });
+
+Deno.test("formatReport renders issue locations when available", () => {
+  const output = formatReport({
+    input: "fix: bug",
+    valid: false,
+    errors: [{
+      rule: "header-max-length",
+      severity: "error",
+      message: "Header is too long.",
+      location: {
+        section: "header",
+        line: 1,
+        column: 73,
+      },
+    }],
+    warnings: [],
+  }, { color: false });
+
+  assertMatch(output, /\[header-max-length\] at header 1:73/);
+});

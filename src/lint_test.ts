@@ -8,6 +8,7 @@ Deno.test("accepts a valid commit header with the default preset", () => {
   assertEquals(report.valid, true);
   assertEquals(report.errors, []);
   assertEquals(report.warnings, []);
+  assertEquals(report.analysis?.summary?.type, "feat");
 });
 
 Deno.test("accepts custom types with the conventional-commits preset", () => {
@@ -284,4 +285,96 @@ Deno.test("checks body and footer line lengths separately with the commitlint pr
     ),
     true,
   );
+});
+
+Deno.test("supports typed rule overrides without leaving the conventional preset", () => {
+  const report = lintCommit("release: ship it.", {
+    rules: {
+      "type-enum": {
+        allowedTypes: ["feat", "fix"],
+      },
+      "subject-full-stop": {
+        level: "warning",
+      },
+    },
+  });
+
+  assertEquals(report.errors.some((issue) => issue.rule === "type-enum"), true);
+  assertEquals(
+    report.warnings.some((issue) => issue.rule === "subject-full-stop"),
+    true,
+  );
+});
+
+Deno.test("can disable a built-in rule via typed overrides", () => {
+  const report = lintCommit("fix: handle edge case\nBody text", {
+    rules: {
+      "body-leading-blank": {
+        level: "off",
+      },
+    },
+  });
+
+  assertEquals(
+    report.errors.some((issue) => issue.rule === "body-leading-blank"),
+    false,
+  );
+  assertEquals(
+    report.warnings.some((issue) => issue.rule === "body-leading-blank"),
+    false,
+  );
+});
+
+Deno.test("exposes structured issue locations", () => {
+  const report = lintCommit(`fix: ${"a".repeat(101)}`, {
+    rules: {
+      "header-max-length": {
+        max: 72,
+      },
+    },
+  });
+  const issue = report.errors.find((candidate) =>
+    candidate.rule === "header-max-length"
+  );
+
+  assertEquals(issue?.location, {
+    section: "header",
+    line: 1,
+    column: 73,
+    length: 34,
+  });
+});
+
+Deno.test("runs custom lint callbacks against the semantic analysis", () => {
+  const report = lintCommit("feat: add search", {
+    plugins: [
+      (commit) => {
+        if (commit.footers.some((footer) => footer.token === "Refs")) {
+          return;
+        }
+
+        return {
+          rule: "refs-required",
+          severity: "warning",
+          message: "Add a Refs footer.",
+          location: {
+            section: "footer",
+            line: 1,
+            column: 1,
+          },
+        };
+      },
+    ],
+  });
+
+  assertEquals(report.warnings, [{
+    rule: "refs-required",
+    severity: "warning",
+    message: "Add a Refs footer.",
+    location: {
+      section: "footer",
+      line: 1,
+      column: 1,
+    },
+  }]);
 });

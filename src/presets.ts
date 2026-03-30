@@ -33,8 +33,8 @@ export type LintPresetConfig = {
   readonly headerMaxLength: MaxLengthRule | undefined;
   readonly bodyMaxLineLength: MaxLengthRule | undefined;
   readonly footerMaxLineLength: MaxLengthRule | undefined;
-  readonly bodyLeadingBlank: SeverityRule;
-  readonly footerLeadingBlank: SeverityRule;
+  readonly bodyLeadingBlank: SeverityRule | undefined;
+  readonly footerLeadingBlank: SeverityRule | undefined;
 };
 
 const ERROR = { severity: "error" } as const;

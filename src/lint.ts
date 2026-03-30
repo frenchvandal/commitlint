@@ -4,78 +4,23 @@
  * @module
  */
 
-import {
-  CASED_LETTER_PATTERN,
-  FOOTER_PATTERN,
-  GIT_COMMENT_PATTERN,
-} from "./constants.ts";
+import { CASED_LETTER_PATTERN } from "./constants.ts";
+import { analyzeCommit } from "./analyze.ts";
+import { splitCommitMessage } from "./message.ts";
 import { parseHeader } from "./parse.ts";
-import { DEFAULT_LINT_PRESET, LINT_PRESET_CONFIGS } from "./presets.ts";
+import {
+  DEFAULT_LINT_PRESET,
+  LINT_PRESET_CONFIGS,
+  type LintPresetConfig,
+} from "./presets.ts";
 import type {
   LintIssue,
+  LintIssueLocation,
   LintOptions,
   LintPreset,
   LintReport,
+  Severity,
 } from "./types.ts";
-
-type CommitSections = {
-  readonly cleaned: string;
-  readonly lines: ReadonlyArray<string>;
-  readonly header: string;
-  readonly body: ReadonlyArray<string>;
-  readonly bodyStart: number;
-  readonly footer: ReadonlyArray<string>;
-  readonly footerStart: number | undefined;
-};
-
-function cleanInput(input: string): string {
-  return input
-    .split("\n")
-    .filter((line) => !GIT_COMMENT_PATTERN.test(line))
-    .join("\n")
-    .trimEnd();
-}
-
-function findFooterStart(lines: ReadonlyArray<string>): number | undefined {
-  let footerStart: number | undefined;
-
-  for (let index = lines.length - 1; index >= 1; index -= 1) {
-    const line = lines[index] ?? "";
-
-    if (line === "") {
-      if (footerStart !== undefined) return footerStart;
-      continue;
-    }
-
-    if (FOOTER_PATTERN.test(line)) {
-      footerStart = index;
-      continue;
-    }
-
-    if (footerStart !== undefined) return footerStart;
-  }
-
-  return footerStart;
-}
-
-function splitCommitMessage(input: string): CommitSections {
-  const cleaned = cleanInput(input);
-  const lines = cleaned.split("\n");
-  const header = lines[0] ?? "";
-  const footerStart = findFooterStart(lines);
-  const bodyStart = lines[1] === "" ? 2 : 1;
-  const bodyEnd = footerStart ?? lines.length;
-
-  return {
-    cleaned,
-    lines,
-    header,
-    body: lines.slice(bodyStart, bodyEnd),
-    bodyStart,
-    footer: footerStart === undefined ? [] : lines.slice(footerStart),
-    footerStart,
-  };
-}
 
 function hasDisallowedSubjectCase(subject: string): boolean {
   const trimmed = subject.trimStart();
@@ -92,8 +37,9 @@ function addIssue(
   rule: string,
   severity: LintIssue["severity"],
   message: string,
+  location?: LintIssueLocation,
 ): void {
-  issues.push({ rule, severity, message });
+  issues.push({ rule, severity, message, location });
 }
 
 function levenshteinDistance(left: string, right: string): number {
@@ -161,6 +107,155 @@ function getLintPresetConfig(preset: LintPreset) {
   return LINT_PRESET_CONFIGS[preset];
 }
 
+function mergeSeverityRule(
+  base: { readonly severity: Severity } | undefined,
+  override: { readonly level?: Severity | "off" } | undefined,
+  fallback: { readonly severity: Severity } | undefined,
+) {
+  if (override === undefined) return base;
+  if (override.level === "off") return undefined;
+
+  const template = base ?? fallback;
+  if (template === undefined) {
+    return override.level === undefined
+      ? undefined
+      : { severity: override.level };
+  }
+
+  return {
+    severity: override.level ?? template.severity,
+  };
+}
+
+function mergeMaxLengthRule(
+  base: { readonly severity: Severity; readonly max: number } | undefined,
+  override:
+    | { readonly level?: Severity | "off"; readonly max?: number }
+    | undefined,
+  fallback: { readonly severity: Severity; readonly max: number } | undefined,
+) {
+  if (override === undefined) return base;
+  if (override.level === "off") return undefined;
+
+  const template = base ?? fallback;
+  if (template === undefined) return undefined;
+
+  return {
+    severity: override.level ?? template.severity,
+    max: override.max ?? template.max,
+  };
+}
+
+function mergeTypeEnumRule(
+  base:
+    | {
+      readonly severity: Severity;
+      readonly allowedTypes: ReadonlyArray<string>;
+      readonly suggest: boolean;
+    }
+    | undefined,
+  override:
+    | {
+      readonly level?: Severity | "off";
+      readonly allowedTypes?: ReadonlyArray<string>;
+      readonly suggest?: boolean;
+    }
+    | undefined,
+  fallback:
+    | {
+      readonly severity: Severity;
+      readonly allowedTypes: ReadonlyArray<string>;
+      readonly suggest: boolean;
+    }
+    | undefined,
+) {
+  if (override === undefined) return base;
+  if (override.level === "off") return undefined;
+
+  const template = base ?? fallback;
+  if (template === undefined) return undefined;
+
+  return {
+    severity: override.level ?? template.severity,
+    allowedTypes: override.allowedTypes ?? template.allowedTypes,
+    suggest: override.suggest ?? template.suggest,
+  };
+}
+
+function resolveLintConfig(options: LintOptions): LintPresetConfig {
+  const preset = options.preset ?? DEFAULT_LINT_PRESET;
+  const base = getLintPresetConfig(preset);
+  const fallback = LINT_PRESET_CONFIGS["commitlint"];
+  const rules = options.rules;
+
+  if (rules === undefined) return base;
+
+  return {
+    typeEnum: mergeTypeEnumRule(
+      base.typeEnum,
+      rules["type-enum"],
+      fallback.typeEnum,
+    ),
+    typeCase: mergeSeverityRule(
+      base.typeCase,
+      rules["type-case"],
+      fallback.typeCase,
+    ),
+    subjectCase: mergeSeverityRule(
+      base.subjectCase,
+      rules["subject-case"],
+      fallback.subjectCase,
+    ),
+    subjectFullStop: mergeSeverityRule(
+      base.subjectFullStop,
+      rules["subject-full-stop"],
+      fallback.subjectFullStop,
+    ),
+    headerMaxLength: mergeMaxLengthRule(
+      base.headerMaxLength,
+      rules["header-max-length"],
+      fallback.headerMaxLength,
+    ),
+    bodyMaxLineLength: mergeMaxLengthRule(
+      base.bodyMaxLineLength,
+      rules["body-max-line-length"],
+      fallback.bodyMaxLineLength,
+    ),
+    footerMaxLineLength: mergeMaxLengthRule(
+      base.footerMaxLineLength,
+      rules["footer-max-line-length"],
+      fallback.footerMaxLineLength,
+    ),
+    bodyLeadingBlank: mergeSeverityRule(
+      base.bodyLeadingBlank,
+      rules["body-leading-blank"],
+      fallback.bodyLeadingBlank,
+    ),
+    footerLeadingBlank: mergeSeverityRule(
+      base.footerLeadingBlank,
+      rules["footer-leading-blank"],
+      fallback.footerLeadingBlank,
+    ),
+  };
+}
+
+function headerLocation(header: string): LintIssueLocation {
+  return {
+    section: "header",
+    line: 1,
+    column: 1,
+    length: Math.max(header.length, 1),
+  };
+}
+
+function subjectColumn(
+  header: string,
+  parsed: { readonly subject: string },
+): number {
+  const index = header.lastIndexOf(parsed.subject);
+  return index === -1 ? 1 : index + 1;
+}
+
 /**
  * Validate a commit message and return a structured lint report.
  *
@@ -186,10 +281,10 @@ export function lintCommit(
   options: LintOptions = {},
 ): LintReport {
   const issues: LintIssue[] = [];
-  const preset = options.preset ?? DEFAULT_LINT_PRESET;
-  const rules = getLintPresetConfig(preset);
+  const rules = resolveLintConfig(options);
   const { body, bodyStart, cleaned, footer, footerStart, header, lines } =
     splitCommitMessage(input);
+  const analysis = analyzeCommit(input);
 
   if (
     rules.headerMaxLength !== undefined &&
@@ -200,6 +295,12 @@ export function lintCommit(
       "header-max-length",
       rules.headerMaxLength.severity,
       `Header must not exceed ${rules.headerMaxLength.max} characters (got ${header.length}).`,
+      {
+        section: "header",
+        line: 1,
+        column: rules.headerMaxLength.max + 1,
+        length: header.length - rules.headerMaxLength.max,
+      },
     );
   }
 
@@ -209,6 +310,7 @@ export function lintCommit(
       "header-trim",
       "error",
       "Header must not have leading or trailing whitespace.",
+      headerLocation(header),
     );
   }
 
@@ -220,6 +322,7 @@ export function lintCommit(
       "header-pattern",
       "error",
       `Header does not match Conventional Commits format: "<type>[optional scope]: <description>". Got: "${header}"`,
+      headerLocation(header),
     );
   } else {
     if (
@@ -242,6 +345,12 @@ export function lintCommit(
         `Type "${parsed.type}" is not allowed. Allowed types: ${
           rules.typeEnum.allowedTypes.join(", ")
         }.${suggestionMessage}`,
+        {
+          section: "header",
+          line: 1,
+          column: 1,
+          length: Math.max(parsed.type.length, 1),
+        },
       );
     }
 
@@ -254,15 +363,33 @@ export function lintCommit(
         "type-case",
         rules.typeCase.severity,
         `Type "${parsed.type}" must be lower-case.`,
+        {
+          section: "header",
+          line: 1,
+          column: 1,
+          length: Math.max(parsed.type.length, 1),
+        },
       );
     }
 
     if (parsed.type.trim().length === 0) {
-      addIssue(issues, "type-empty", "error", "Type must not be empty.");
+      addIssue(
+        issues,
+        "type-empty",
+        "error",
+        "Type must not be empty.",
+        headerLocation(header),
+      );
     }
 
     if (parsed.subject.trim().length === 0) {
-      addIssue(issues, "subject-empty", "error", "Subject must not be empty.");
+      addIssue(
+        issues,
+        "subject-empty",
+        "error",
+        "Subject must not be empty.",
+        headerLocation(header),
+      );
     }
 
     if (
@@ -274,6 +401,12 @@ export function lintCommit(
         "subject-full-stop",
         rules.subjectFullStop.severity,
         'Subject must not end with a full stop (".").',
+        {
+          section: "header",
+          line: 1,
+          column: header.length,
+          length: 1,
+        },
       );
     }
 
@@ -286,6 +419,12 @@ export function lintCommit(
         "subject-case",
         rules.subjectCase.severity,
         "Subject must not be sentence-case, start-case, pascal-case, or upper-case.",
+        {
+          section: "header",
+          line: 1,
+          column: subjectColumn(header, parsed),
+          length: Math.max(parsed.subject.length, 1),
+        },
       );
     }
   }
@@ -300,26 +439,52 @@ export function lintCommit(
           `Body line ${
             index + bodyStart + 1
           } must not exceed ${rules.bodyMaxLineLength.max} characters (got ${line.length}).`,
+          {
+            section: "body",
+            line: index + bodyStart + 1,
+            column: rules.bodyMaxLineLength.max + 1,
+            length: line.length - rules.bodyMaxLineLength.max,
+          },
         );
       }
     }
   }
 
-  if (body.length > 0 && lines[1] !== "") {
+  if (
+    rules.bodyLeadingBlank !== undefined &&
+    body.length > 0 &&
+    lines[1] !== ""
+  ) {
     addIssue(
       issues,
       "body-leading-blank",
       rules.bodyLeadingBlank.severity,
       "Body must be separated from the header by a blank line.",
+      {
+        section: "body",
+        line: bodyStart + 1,
+        column: 1,
+        length: Math.max((lines[bodyStart] ?? "").length, 1),
+      },
     );
   }
 
-  if (footerStart !== undefined && lines[footerStart - 1] !== "") {
+  if (
+    rules.footerLeadingBlank !== undefined &&
+    footerStart !== undefined &&
+    lines[footerStart - 1] !== ""
+  ) {
     addIssue(
       issues,
       "footer-leading-blank",
       rules.footerLeadingBlank.severity,
       "Footer must be separated from the preceding section by a blank line.",
+      {
+        section: "footer",
+        line: footerStart + 1,
+        column: 1,
+        length: Math.max((lines[footerStart] ?? "").length, 1),
+      },
     );
   }
 
@@ -333,9 +498,23 @@ export function lintCommit(
           `Footer line ${
             index + footerStart + 1
           } must not exceed ${rules.footerMaxLineLength.max} characters (got ${line.length}).`,
+          {
+            section: "footer",
+            line: index + footerStart + 1,
+            column: rules.footerMaxLineLength.max + 1,
+            length: line.length - rules.footerMaxLineLength.max,
+          },
         );
       }
     }
+  }
+
+  for (const plugin of options.plugins ?? []) {
+    const result = plugin(analysis);
+    if (result === undefined) continue;
+
+    const pluginIssues = Array.isArray(result) ? [...result] : [result];
+    issues.push(...pluginIssues);
   }
 
   const errors: LintIssue[] = [];
@@ -354,5 +533,6 @@ export function lintCommit(
     valid: errors.length === 0,
     errors,
     warnings,
+    analysis,
   };
 }
