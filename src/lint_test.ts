@@ -1,10 +1,11 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 
-import { lintCommit } from "../mod.ts";
+import { DEFAULT_COMMIT_TYPES, lintCommit } from "../mod.ts";
 
 Deno.test("accepts a valid commit header with the default preset", () => {
   const report = lintCommit("feat(parser): add array support");
 
+  assertEquals(report.ignored, false);
   assertEquals(report.valid, true);
   assertEquals(report.errors, []);
   assertEquals(report.warnings, []);
@@ -153,6 +154,17 @@ Deno.test("suggests the closest allowed type with the commitlint preset", () => 
   );
 
   assertStringIncludes(issue?.message ?? "", 'Did you mean "feat"?');
+});
+
+Deno.test("exports a public catalog of default commit types", () => {
+  assertEquals(
+    DEFAULT_COMMIT_TYPES.find((type) => type.name === "feat"),
+    {
+      name: "feat",
+      description: "A new feature.",
+      title: "Features",
+    },
+  );
 });
 
 Deno.test("rejects disallowed subject case with the commitlint preset", () => {
@@ -304,6 +316,169 @@ Deno.test("supports typed rule overrides without leaving the conventional preset
     report.warnings.some((issue) => issue.rule === "subject-full-stop"),
     true,
   );
+});
+
+Deno.test("supports scope lint rules via typed overrides", () => {
+  const missingScope = lintCommit("feat: add search", {
+    rules: {
+      "scope-empty": {
+        level: "error",
+      },
+    },
+  });
+  const invalidScope = lintCommit("feat(API): add search", {
+    rules: {
+      "scope-case": {
+        level: "error",
+      },
+      "scope-enum": {
+        allowedScopes: ["api", "parser"],
+      },
+    },
+  });
+
+  assertEquals(
+    missingScope.errors.some((issue) => issue.rule === "scope-empty"),
+    true,
+  );
+  assertEquals(
+    invalidScope.errors.some((issue) => issue.rule === "scope-case"),
+    true,
+  );
+  assertEquals(
+    invalidScope.errors.some((issue) => issue.rule === "scope-enum"),
+    true,
+  );
+});
+
+Deno.test("supports footer token rules via typed overrides", () => {
+  const enumReport = lintCommit("feat: add search\n\nTicket: #123", {
+    rules: {
+      "footer-token-enum": {
+        allowedTokens: ["Refs", "BREAKING CHANGE"],
+      },
+    },
+  });
+  const requiredReport = lintCommit("feat: add search", {
+    rules: {
+      "footer-token-required": {
+        tokens: ["Refs"],
+      },
+    },
+  });
+
+  const enumIssue = enumReport.errors.find((issue) =>
+    issue.rule === "footer-token-enum"
+  );
+
+  assertEquals(enumIssue?.location, {
+    section: "footer",
+    line: 3,
+    column: 1,
+    length: 6,
+  });
+  assertEquals(
+    requiredReport.errors.some((issue) =>
+      issue.rule === "footer-token-required"
+    ),
+    true,
+  );
+
+  const noFooterReport = lintCommit("feat: add search", {
+    rules: {
+      "footer-token-enum": {
+        allowedTokens: ["Refs"],
+      },
+    },
+  });
+  assertEquals(
+    noFooterReport.errors.some((issue) => issue.rule === "footer-token-enum"),
+    false,
+    "footer-token-enum must not fire when there is no footer block",
+  );
+
+  const emptyTokensReport = lintCommit("feat: add search", {
+    rules: {
+      "footer-token-required": {
+        tokens: [],
+      },
+    },
+  });
+  assertEquals(
+    emptyTokensReport.errors.some((issue) =>
+      issue.rule === "footer-token-required"
+    ),
+    false,
+    "footer-token-required must not fire when tokens list is empty",
+  );
+});
+
+Deno.test("requires a descriptive BREAKING CHANGE footer when configured", () => {
+  const report = lintCommit("feat(api)!: ship breaking API", {
+    rules: {
+      "breaking-change-description-required": {
+        level: "error",
+      },
+    },
+  });
+
+  assertEquals(
+    report.errors.some((issue) =>
+      issue.rule === "breaking-change-description-required"
+    ),
+    true,
+  );
+
+  const hyphenatedReport = lintCommit(
+    "fix: patch\n\nBREAKING-CHANGE: ",
+    {
+      rules: {
+        "breaking-change-description-required": {
+          level: "error",
+        },
+      },
+    },
+  );
+  assertEquals(
+    hyphenatedReport.errors.some((issue) =>
+      issue.rule === "breaking-change-description-required"
+    ),
+    true,
+    "BREAKING-CHANGE (hyphen) with empty value must trigger the rule",
+  );
+});
+
+Deno.test("can ignore special workflow commits with default ignores", () => {
+  const ignored = lintCommit("fixup! feat: add search", {
+    defaultIgnores: true,
+  });
+  const strict = lintCommit("fixup! feat: add search");
+
+  assertEquals(ignored.ignored, true);
+  assertEquals(ignored.valid, true);
+  assertEquals(ignored.errors, []);
+  assertEquals(strict.ignored, false);
+  assertEquals(
+    strict.errors.some((issue) => issue.rule === "header-pattern"),
+    true,
+  );
+});
+
+Deno.test("runs custom ignore predicates before lint rules", () => {
+  const report = lintCommit("release: ship it", {
+    ignores: [
+      (commit) => commit.header === "release: ship it",
+    ],
+    rules: {
+      "type-enum": {
+        allowedTypes: ["feat", "fix"],
+      },
+    },
+  });
+
+  assertEquals(report.ignored, true);
+  assertEquals(report.errors, []);
+  assertEquals(report.warnings, []);
 });
 
 Deno.test("can disable a built-in rule via typed overrides", () => {

@@ -37,7 +37,9 @@ export type {
   CommitParentNodeType,
   CommitPoint,
   CommitPosition,
+  CommitTypeDefinition,
   FormatOptions,
+  LintIgnorePredicate,
   LintIssue,
   LintIssueLocation,
   LintOptions,
@@ -49,6 +51,7 @@ export type {
   ParsedHeader,
   Severity,
 } from "./src/types.ts";
+export { DEFAULT_COMMIT_TYPES } from "./src/commit_types.ts";
 export { analyzeCommit } from "./src/analyze.ts";
 export { lintCommit } from "./src/lint.ts";
 export { formatReport } from "./src/format.ts";

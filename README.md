@@ -12,7 +12,10 @@ Cloudflare Workers.
 - Defaults to the core Conventional Commits specification.
 - Provides an optional `commitlint` preset that mirrors
   `@commitlint/config-conventional`.
-- Supports typed rule overrides and custom lint callbacks.
+- Supports typed rule overrides for scopes and footer tokens.
+- Supports opt-in ignore policies for workflow commits such as `fixup!`.
+- Exports built-in commit type metadata for editor and UI integrations.
+- Supports custom lint callbacks with no runtime dependencies.
 - Publishes a library-only surface to JSR.
 
 ## Install
@@ -34,6 +37,7 @@ npx jsr add @miscellaneous/commitlint
 ```ts
 import {
   analyzeCommit,
+  DEFAULT_COMMIT_TYPES,
   formatReport,
   lintCommit,
   parseCommit,
@@ -50,6 +54,7 @@ console.log(formatReport(report));
 console.log(tree.children[0]?.type); // "summary"
 console.log(commit.footers[0]?.token); // "Refs"
 console.log(header?.scope); // "api"
+console.log(DEFAULT_COMMIT_TYPES[4]?.name); // "feat"
 ```
 
 Use typed rule overrides on top of a preset:
@@ -57,21 +62,21 @@ Use typed rule overrides on top of a preset:
 ```ts
 import { lintCommit } from "jsr:@miscellaneous/commitlint";
 
-const report = lintCommit("feature: add search.", {
+const report = lintCommit("feature(ui): add search.", {
   preset: "conventional-commits",
   rules: {
-    "type-enum": {
-      allowedTypes: ["feat", "fix", "docs"],
+    "scope-enum": {
+      allowedScopes: ["api", "parser"],
     },
-    "subject-full-stop": {
-      level: "warning",
+    "footer-token-required": {
+      tokens: ["Refs"],
     },
   },
 });
 
 console.log(report.valid); // false
-console.log(report.errors[0]?.rule); // "type-enum"
-console.log(report.warnings[0]?.rule); // "subject-full-stop"
+console.log(report.errors[0]?.rule); // "scope-enum"
+console.log(report.errors[1]?.rule); // "footer-token-required"
 ```
 
 Add a custom lint callback with no runtime dependencies:
@@ -96,6 +101,19 @@ const report = lintCommit("feat: add search", {
 });
 
 console.log(report.warnings[0]?.rule); // "refs-required"
+```
+
+Ignore workflow commits without changing your lint rules:
+
+```ts
+import { lintCommit } from "jsr:@miscellaneous/commitlint";
+
+const report = lintCommit("fixup! feat: add search", {
+  defaultIgnores: true,
+});
+
+console.log(report.ignored); // true
+console.log(report.valid); // true
 ```
 
 Parse a message without applying lint rules:
@@ -137,7 +155,14 @@ Available presets:
 
 - `rules`: typed overrides for built-in rules, merged on top of the selected
   preset.
+- `defaultIgnores`: opt-in built-in ignore predicates for workflow commits such
+  as `fixup!`, `squash!`, merge commits, and revert commits.
+- `ignores`: custom predicates that can short-circuit linting for matching
+  messages.
 - `plugins`: pure TypeScript callbacks that can emit additional issues.
+
+When a message matches an ignore predicate, `LintReport.ignored` is `true` and
+the report is returned as valid without running rules or plugins.
 
 ### `formatReport(report: LintReport, options?: { color?: boolean }): string`
 
@@ -146,6 +171,12 @@ Format a lint report for terminal output.
 ### `analyzeCommit(input: string): CommitAnalysis`
 
 Analyze a commit message into semantic sections without applying lint rules.
+
+### `DEFAULT_COMMIT_TYPES: ReadonlyArray<CommitTypeDefinition>`
+
+Expose the built-in commit type catalog mirrored from
+`@commitlint/config-conventional`, with descriptions suitable for editor and UI
+integrations.
 
 ### `parseHeader(input: string): ParsedHeader | undefined`
 

@@ -5,8 +5,8 @@
  */
 
 import { CASED_LETTER_PATTERN } from "./constants.ts";
-import { analyzeCommit } from "./analyze.ts";
-import { splitCommitMessage } from "./message.ts";
+import type { CommitSections, ParsedCommitFooter } from "./message.ts";
+import { parseFooterLinesWithOffsets, splitCommitMessage } from "./message.ts";
 import { parseHeader } from "./parse.ts";
 import {
   DEFAULT_LINT_PRESET,
@@ -14,6 +14,8 @@ import {
   type LintPresetConfig,
 } from "./presets.ts";
 import type {
+  CommitAnalysis,
+  LintIgnorePredicate,
   LintIssue,
   LintIssueLocation,
   LintOptions,
@@ -21,6 +23,13 @@ import type {
   LintReport,
   Severity,
 } from "./types.ts";
+
+const DEFAULT_IGNORE_PREDICATES: ReadonlyArray<LintIgnorePredicate> = [
+  (commit) => /^fixup!\s/u.test(commit.header),
+  (commit) => /^squash!\s/u.test(commit.header),
+  (commit) => /^Merge\b/u.test(commit.header),
+  (commit) => /^Revert\b/u.test(commit.header),
+];
 
 function hasDisallowedSubjectCase(subject: string): boolean {
   const trimmed = subject.trimStart();
@@ -73,17 +82,17 @@ function levenshteinDistance(left: string, right: string): number {
   return previous[right.length] ?? 0;
 }
 
-function getClosestAllowedType(
-  type: string,
-  allowedTypes: ReadonlyArray<string>,
+function getClosestAllowedValue(
+  value: string,
+  allowedValues: ReadonlyArray<string>,
 ): string | undefined {
-  const normalizedType = type.toLowerCase();
+  const normalizedValue = value.toLowerCase();
   let suggestion: string | undefined;
   let bestDistance = Number.POSITIVE_INFINITY;
 
-  for (const candidate of allowedTypes) {
+  for (const candidate of allowedValues) {
     const distance = levenshteinDistance(
-      normalizedType,
+      normalizedValue,
       candidate.toLowerCase(),
     );
 
@@ -97,7 +106,7 @@ function getClosestAllowedType(
 
   const maxDistance = Math.max(
     1,
-    Math.floor(Math.max(normalizedType.length, suggestion.length) / 2),
+    Math.floor(Math.max(normalizedValue.length, suggestion.length) / 2),
   );
 
   return bestDistance <= maxDistance ? suggestion : undefined;
@@ -138,7 +147,14 @@ function mergeMaxLengthRule(
   if (override.level === "off") return undefined;
 
   const template = base ?? fallback;
-  if (template === undefined) return undefined;
+  if (template === undefined) {
+    if (override.max === undefined) return undefined;
+
+    return {
+      severity: override.level ?? "error",
+      max: override.max,
+    };
+  }
 
   return {
     severity: override.level ?? template.severity,
@@ -146,25 +162,25 @@ function mergeMaxLengthRule(
   };
 }
 
-function mergeTypeEnumRule(
+function mergeEnumRule(
   base:
     | {
       readonly severity: Severity;
-      readonly allowedTypes: ReadonlyArray<string>;
+      readonly allowed: ReadonlyArray<string>;
       readonly suggest: boolean;
     }
     | undefined,
   override:
     | {
       readonly level?: Severity | "off";
-      readonly allowedTypes?: ReadonlyArray<string>;
+      readonly allowed?: ReadonlyArray<string>;
       readonly suggest?: boolean;
     }
     | undefined,
   fallback:
     | {
       readonly severity: Severity;
-      readonly allowedTypes: ReadonlyArray<string>;
+      readonly allowed: ReadonlyArray<string>;
       readonly suggest: boolean;
     }
     | undefined,
@@ -173,12 +189,53 @@ function mergeTypeEnumRule(
   if (override.level === "off") return undefined;
 
   const template = base ?? fallback;
-  if (template === undefined) return undefined;
+  if (template === undefined) {
+    if (override.allowed === undefined) return undefined;
+
+    return {
+      severity: override.level ?? "error",
+      allowed: override.allowed,
+      suggest: override.suggest ?? true,
+    };
+  }
 
   return {
     severity: override.level ?? template.severity,
-    allowedTypes: override.allowedTypes ?? template.allowedTypes,
+    allowed: override.allowed ?? template.allowed,
     suggest: override.suggest ?? template.suggest,
+  };
+}
+
+function mergeRequiredTokensRule(
+  base:
+    | { readonly severity: Severity; readonly tokens: ReadonlyArray<string> }
+    | undefined,
+  override:
+    | {
+      readonly level?: Severity | "off";
+      readonly tokens?: ReadonlyArray<string>;
+    }
+    | undefined,
+  fallback:
+    | { readonly severity: Severity; readonly tokens: ReadonlyArray<string> }
+    | undefined,
+) {
+  if (override === undefined) return base;
+  if (override.level === "off") return undefined;
+
+  const template = base ?? fallback;
+  if (template === undefined) {
+    if (override.tokens === undefined) return undefined;
+
+    return {
+      severity: override.level ?? "error",
+      tokens: override.tokens,
+    };
+  }
+
+  return {
+    severity: override.level ?? template.severity,
+    tokens: override.tokens ?? template.tokens,
   };
 }
 
@@ -191,15 +248,38 @@ function resolveLintConfig(options: LintOptions): LintPresetConfig {
   if (rules === undefined) return base;
 
   return {
-    typeEnum: mergeTypeEnumRule(
+    typeEnum: mergeEnumRule(
       base.typeEnum,
-      rules["type-enum"],
+      rules["type-enum"] === undefined ? undefined : {
+        level: rules["type-enum"].level,
+        allowed: rules["type-enum"].allowedTypes,
+        suggest: rules["type-enum"].suggest,
+      },
       fallback.typeEnum,
     ),
     typeCase: mergeSeverityRule(
       base.typeCase,
       rules["type-case"],
       fallback.typeCase,
+    ),
+    scopeEnum: mergeEnumRule(
+      base.scopeEnum,
+      rules["scope-enum"] === undefined ? undefined : {
+        level: rules["scope-enum"].level,
+        allowed: rules["scope-enum"].allowedScopes,
+        suggest: rules["scope-enum"].suggest,
+      },
+      fallback.scopeEnum,
+    ),
+    scopeCase: mergeSeverityRule(
+      base.scopeCase,
+      rules["scope-case"],
+      fallback.scopeCase,
+    ),
+    scopeEmpty: mergeSeverityRule(
+      base.scopeEmpty,
+      rules["scope-empty"],
+      fallback.scopeEmpty,
     ),
     subjectCase: mergeSeverityRule(
       base.subjectCase,
@@ -236,6 +316,25 @@ function resolveLintConfig(options: LintOptions): LintPresetConfig {
       rules["footer-leading-blank"],
       fallback.footerLeadingBlank,
     ),
+    footerTokenEnum: mergeEnumRule(
+      base.footerTokenEnum,
+      rules["footer-token-enum"] === undefined ? undefined : {
+        level: rules["footer-token-enum"].level,
+        allowed: rules["footer-token-enum"].allowedTokens,
+        suggest: rules["footer-token-enum"].suggest,
+      },
+      fallback.footerTokenEnum,
+    ),
+    footerTokenRequired: mergeRequiredTokensRule(
+      base.footerTokenRequired,
+      rules["footer-token-required"],
+      fallback.footerTokenRequired,
+    ),
+    breakingChangeDescriptionRequired: mergeSeverityRule(
+      base.breakingChangeDescriptionRequired,
+      rules["breaking-change-description-required"],
+      fallback.breakingChangeDescriptionRequired,
+    ),
   };
 }
 
@@ -254,6 +353,48 @@ function subjectColumn(
 ): number {
   const index = header.lastIndexOf(parsed.subject);
   return index === -1 ? 1 : index + 1;
+}
+
+function scopeColumn(parsed: {
+  readonly type: string;
+  readonly scope: string | undefined;
+}): number {
+  if (parsed.scope === undefined) return 1;
+  return parsed.type.length + 2;
+}
+
+function footerTokenLocation(
+  lineNumber: number,
+  token: string,
+): LintIssueLocation {
+  return {
+    section: "footer",
+    line: lineNumber,
+    column: 1,
+    length: Math.max(token.length, 1),
+  };
+}
+
+function buildCommitAnalysis(
+  sections: CommitSections,
+  summary: CommitAnalysis["summary"],
+  footerEntries: ReadonlyArray<ParsedCommitFooter>,
+): CommitAnalysis {
+  return {
+    input: sections.cleaned,
+    header: sections.header,
+    summary,
+    body: sections.body.length === 0 ? undefined : sections.body.join("\n"),
+    footer: sections.footer.length === 0
+      ? undefined
+      : sections.footer.join("\n"),
+    footers: footerEntries.map((footer) => ({
+      token: footer.token,
+      separator: footer.separator,
+      value: footer.value,
+      breaking: footer.breaking,
+    })),
+  };
 }
 
 /**
@@ -284,7 +425,36 @@ export function lintCommit(
   const rules = resolveLintConfig(options);
   const { body, bodyStart, cleaned, footer, footerStart, header, lines } =
     splitCommitMessage(input);
-  const analysis = analyzeCommit(input);
+  const parsed = parseHeader(header);
+  const footerEntries = parseFooterLinesWithOffsets(footer);
+  const analysis = buildCommitAnalysis(
+    {
+      cleaned,
+      lines,
+      header,
+      body,
+      bodyStart,
+      footer,
+      footerStart,
+    },
+    parsed,
+    footerEntries,
+  );
+  const ignorePredicates = [
+    ...(options.defaultIgnores === true ? DEFAULT_IGNORE_PREDICATES : []),
+    ...(options.ignores ?? []),
+  ];
+
+  if (ignorePredicates.some((predicate) => predicate(analysis))) {
+    return {
+      input: cleaned,
+      ignored: true,
+      valid: true,
+      errors: [],
+      warnings: [],
+      analysis,
+    };
+  }
 
   if (
     rules.headerMaxLength !== undefined &&
@@ -314,8 +484,6 @@ export function lintCommit(
     );
   }
 
-  const parsed = parseHeader(header);
-
   if (parsed === undefined) {
     addIssue(
       issues,
@@ -327,12 +495,10 @@ export function lintCommit(
   } else {
     if (
       rules.typeEnum !== undefined &&
-      !rules.typeEnum.allowedTypes.some((allowedType) =>
-        allowedType === parsed.type
-      )
+      !rules.typeEnum.allowed.some((allowedType) => allowedType === parsed.type)
     ) {
       const suggestion = rules.typeEnum.suggest
-        ? getClosestAllowedType(parsed.type, rules.typeEnum.allowedTypes)
+        ? getClosestAllowedValue(parsed.type, rules.typeEnum.allowed)
         : undefined;
       const suggestionMessage = suggestion === undefined
         ? ""
@@ -343,7 +509,7 @@ export function lintCommit(
         "type-enum",
         rules.typeEnum.severity,
         `Type "${parsed.type}" is not allowed. Allowed types: ${
-          rules.typeEnum.allowedTypes.join(", ")
+          rules.typeEnum.allowed.join(", ")
         }.${suggestionMessage}`,
         {
           section: "header",
@@ -372,23 +538,67 @@ export function lintCommit(
       );
     }
 
-    if (parsed.type.trim().length === 0) {
+    if (rules.scopeEmpty !== undefined && parsed.scope === undefined) {
       addIssue(
         issues,
-        "type-empty",
-        "error",
-        "Type must not be empty.",
-        headerLocation(header),
+        "scope-empty",
+        rules.scopeEmpty.severity,
+        "Scope is required.",
+        {
+          section: "header",
+          line: 1,
+          column: parsed.type.length + 1,
+          length: 1,
+        },
       );
     }
 
-    if (parsed.subject.trim().length === 0) {
+    if (
+      rules.scopeEnum !== undefined &&
+      parsed.scope !== undefined &&
+      !rules.scopeEnum.allowed.some((allowedScope) =>
+        allowedScope === parsed.scope
+      )
+    ) {
+      const suggestion = rules.scopeEnum.suggest
+        ? getClosestAllowedValue(parsed.scope, rules.scopeEnum.allowed)
+        : undefined;
+      const suggestionMessage = suggestion === undefined
+        ? ""
+        : ` Did you mean "${suggestion}"?`;
+
       addIssue(
         issues,
-        "subject-empty",
-        "error",
-        "Subject must not be empty.",
-        headerLocation(header),
+        "scope-enum",
+        rules.scopeEnum.severity,
+        `Scope "${parsed.scope}" is not allowed. Allowed scopes: ${
+          rules.scopeEnum.allowed.join(", ")
+        }.${suggestionMessage}`,
+        {
+          section: "header",
+          line: 1,
+          column: scopeColumn(parsed),
+          length: Math.max(parsed.scope.length, 1),
+        },
+      );
+    }
+
+    if (
+      rules.scopeCase !== undefined &&
+      parsed.scope !== undefined &&
+      parsed.scope !== parsed.scope.toLowerCase()
+    ) {
+      addIssue(
+        issues,
+        "scope-case",
+        rules.scopeCase.severity,
+        `Scope "${parsed.scope}" must be lower-case.`,
+        {
+          section: "header",
+          line: 1,
+          column: scopeColumn(parsed),
+          length: Math.max(parsed.scope.length, 1),
+        },
       );
     }
 
@@ -404,7 +614,7 @@ export function lintCommit(
         {
           section: "header",
           line: 1,
-          column: header.length,
+          column: header.trimEnd().length,
           length: 1,
         },
       );
@@ -509,6 +719,77 @@ export function lintCommit(
     }
   }
 
+  if (rules.footerTokenEnum !== undefined && footerStart !== undefined) {
+    for (const entry of footerEntries) {
+      if (rules.footerTokenEnum.allowed.includes(entry.token)) {
+        continue;
+      }
+
+      const suggestion = rules.footerTokenEnum.suggest
+        ? getClosestAllowedValue(entry.token, rules.footerTokenEnum.allowed)
+        : undefined;
+      const suggestionMessage = suggestion === undefined
+        ? ""
+        : ` Did you mean "${suggestion}"?`;
+      const lineNumber = footerStart + entry.lineOffset + 1;
+      addIssue(
+        issues,
+        "footer-token-enum",
+        rules.footerTokenEnum.severity,
+        `Footer token "${entry.token}" is not allowed. Allowed tokens: ${
+          rules.footerTokenEnum.allowed.join(", ")
+        }.${suggestionMessage}`,
+        footerTokenLocation(lineNumber, entry.token),
+      );
+    }
+  }
+
+  if (
+    rules.footerTokenRequired !== undefined &&
+    rules.footerTokenRequired.tokens.length > 0 &&
+    !rules.footerTokenRequired.tokens.some((token) =>
+      footerEntries.some((entry) => entry.token === token)
+    )
+  ) {
+    addIssue(
+      issues,
+      "footer-token-required",
+      rules.footerTokenRequired.severity,
+      `Commit must include at least one footer token from: ${
+        rules.footerTokenRequired.tokens.join(", ")
+      }.`,
+    );
+  }
+
+  if (rules.breakingChangeDescriptionRequired !== undefined) {
+    const breakingFooter = footerEntries.find((entry) => entry.breaking);
+    const hasBreakingDescription = footerEntries.some((entry) =>
+      entry.breaking && entry.value.trim().length > 0
+    );
+    const isBreaking = parsed?.breaking === true ||
+      breakingFooter !== undefined;
+
+    if (isBreaking && !hasBreakingDescription) {
+      const location = breakingFooter !== undefined && footerStart !== undefined
+        ? {
+          section: "footer" as const,
+          line: footerStart + breakingFooter.lineOffset + 1,
+          column: breakingFooter.token.length +
+            breakingFooter.separator.length + 1,
+          length: 1,
+        }
+        : headerLocation(header);
+
+      addIssue(
+        issues,
+        "breaking-change-description-required",
+        rules.breakingChangeDescriptionRequired.severity,
+        "Breaking changes must include a non-empty BREAKING CHANGE footer.",
+        location,
+      );
+    }
+  }
+
   for (const plugin of options.plugins ?? []) {
     const result = plugin(analysis);
     if (result === undefined) continue;
@@ -530,6 +811,7 @@ export function lintCommit(
 
   return {
     input: cleaned,
+    ignored: false,
     valid: errors.length === 0,
     errors,
     warnings,

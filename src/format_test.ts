@@ -5,6 +5,7 @@ import type { LintReport } from "./types.ts";
 
 const VALID_REPORT: LintReport = {
   input: "feat: add search",
+  ignored: false,
   valid: true,
   errors: [],
   warnings: [],
@@ -26,6 +27,7 @@ Deno.test("formatReport omits ANSI codes when color is disabled", () => {
 Deno.test("formatReport renders errors and warnings", () => {
   const output = formatReport({
     input: "wip: ship it",
+    ignored: false,
     valid: false,
     errors: [
       {
@@ -58,6 +60,7 @@ Deno.test("formatReport includes ANSI codes when color is enabled", () => {
 Deno.test("formatReport renders issue locations when available", () => {
   const output = formatReport({
     input: "fix: bug",
+    ignored: false,
     valid: false,
     errors: [{
       rule: "header-max-length",
@@ -73,4 +76,16 @@ Deno.test("formatReport renders issue locations when available", () => {
   }, { color: false });
 
   assertMatch(output, /\[header-max-length\] at header 1:73/);
+});
+
+Deno.test("formatReport renders ignored reports", () => {
+  const output = formatReport({
+    input: "fixup! feat: add search",
+    ignored: true,
+    valid: true,
+    errors: [],
+    warnings: [],
+  }, { color: false });
+
+  assertMatch(output, /commit message was ignored/);
 });

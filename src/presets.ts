@@ -8,8 +8,8 @@ import {
   COMMITLINT_BODY_MAX_LINE_LENGTH,
   COMMITLINT_FOOTER_MAX_LINE_LENGTH,
   COMMITLINT_HEADER_MAX_LENGTH,
-  COMMITLINT_TYPE_LIST,
 } from "./constants.ts";
+import { DEFAULT_COMMIT_TYPES } from "./commit_types.ts";
 import type { LintPreset, Severity } from "./types.ts";
 
 type SeverityRule = {
@@ -20,14 +20,21 @@ type MaxLengthRule = SeverityRule & {
   readonly max: number;
 };
 
-type TypeEnumRule = SeverityRule & {
-  readonly allowedTypes: ReadonlyArray<string>;
+type EnumRule = SeverityRule & {
+  readonly allowed: ReadonlyArray<string>;
   readonly suggest: boolean;
 };
 
+type RequiredTokensRule = SeverityRule & {
+  readonly tokens: ReadonlyArray<string>;
+};
+
 export type LintPresetConfig = {
-  readonly typeEnum: TypeEnumRule | undefined;
+  readonly typeEnum: EnumRule | undefined;
   readonly typeCase: SeverityRule | undefined;
+  readonly scopeEnum: EnumRule | undefined;
+  readonly scopeCase: SeverityRule | undefined;
+  readonly scopeEmpty: SeverityRule | undefined;
   readonly subjectCase: SeverityRule | undefined;
   readonly subjectFullStop: SeverityRule | undefined;
   readonly headerMaxLength: MaxLengthRule | undefined;
@@ -35,6 +42,9 @@ export type LintPresetConfig = {
   readonly footerMaxLineLength: MaxLengthRule | undefined;
   readonly bodyLeadingBlank: SeverityRule | undefined;
   readonly footerLeadingBlank: SeverityRule | undefined;
+  readonly footerTokenEnum: EnumRule | undefined;
+  readonly footerTokenRequired: RequiredTokensRule | undefined;
+  readonly breakingChangeDescriptionRequired: SeverityRule | undefined;
 };
 
 const ERROR = { severity: "error" } as const;
@@ -46,6 +56,9 @@ export const LINT_PRESET_CONFIGS = {
   "conventional-commits": {
     typeEnum: undefined,
     typeCase: undefined,
+    scopeEnum: undefined,
+    scopeCase: undefined,
+    scopeEmpty: undefined,
     subjectCase: undefined,
     subjectFullStop: undefined,
     headerMaxLength: undefined,
@@ -53,14 +66,20 @@ export const LINT_PRESET_CONFIGS = {
     footerMaxLineLength: undefined,
     bodyLeadingBlank: ERROR,
     footerLeadingBlank: ERROR,
+    footerTokenEnum: undefined,
+    footerTokenRequired: undefined,
+    breakingChangeDescriptionRequired: undefined,
   },
   "commitlint": {
     typeEnum: {
       ...ERROR,
-      allowedTypes: COMMITLINT_TYPE_LIST,
+      allowed: DEFAULT_COMMIT_TYPES.map((type) => type.name),
       suggest: true,
     },
     typeCase: ERROR,
+    scopeEnum: undefined,
+    scopeCase: undefined,
+    scopeEmpty: undefined,
     subjectCase: ERROR,
     subjectFullStop: ERROR,
     headerMaxLength: {
@@ -77,5 +96,8 @@ export const LINT_PRESET_CONFIGS = {
     },
     bodyLeadingBlank: WARNING,
     footerLeadingBlank: WARNING,
+    footerTokenEnum: undefined,
+    footerTokenRequired: undefined,
+    breakingChangeDescriptionRequired: undefined,
   },
 } satisfies Record<LintPreset, LintPresetConfig>;

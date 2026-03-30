@@ -24,6 +24,16 @@ export type LintRuleLevel = Severity | "off";
 /** Built-in lint presets supported by {@link lintCommit}. */
 export type LintPreset = "conventional-commits" | "commitlint";
 
+/** Metadata describing a known commit type. */
+export type CommitTypeDefinition = {
+  /** The raw commit type name, such as `feat`. */
+  readonly name: string;
+  /** A concise human-readable description of the type. */
+  readonly description: string;
+  /** An optional category title suitable for UIs or changelog headings. */
+  readonly title?: string;
+};
+
 /** A structured location attached to a lint issue. */
 export type LintIssueLocation = {
   /** The logical commit section that emitted the issue. */
@@ -80,6 +90,8 @@ export type CommitAnalysis = {
 export type LintReport = {
   /** The normalized input after Git comment lines and trailing whitespace are removed. */
   readonly input: string;
+  /** Whether the message matched an ignore predicate and skipped lint rules. */
+  readonly ignored: boolean;
   /** Whether the commit message contains no errors. Warnings do not make the report invalid. */
   readonly valid: boolean;
   /** All error-level issues found in the message. */
@@ -100,6 +112,20 @@ export type LintRulesConfig = {
   };
   /** Override the `type-case` rule. */
   readonly "type-case"?: {
+    readonly level?: LintRuleLevel;
+  };
+  /** Override the `scope-enum` rule. */
+  readonly "scope-enum"?: {
+    readonly level?: LintRuleLevel;
+    readonly allowedScopes?: ReadonlyArray<string>;
+    readonly suggest?: boolean;
+  };
+  /** Override the `scope-case` rule. */
+  readonly "scope-case"?: {
+    readonly level?: LintRuleLevel;
+  };
+  /** Override the `scope-empty` rule. */
+  readonly "scope-empty"?: {
     readonly level?: LintRuleLevel;
   };
   /** Override the `subject-case` rule. */
@@ -133,12 +159,30 @@ export type LintRulesConfig = {
   readonly "footer-leading-blank"?: {
     readonly level?: LintRuleLevel;
   };
+  /** Override the `footer-token-enum` rule. */
+  readonly "footer-token-enum"?: {
+    readonly level?: LintRuleLevel;
+    readonly allowedTokens?: ReadonlyArray<string>;
+    readonly suggest?: boolean;
+  };
+  /** Override the `footer-token-required` rule. */
+  readonly "footer-token-required"?: {
+    readonly level?: LintRuleLevel;
+    readonly tokens?: ReadonlyArray<string>;
+  };
+  /** Override the `breaking-change-description-required` rule. */
+  readonly "breaking-change-description-required"?: {
+    readonly level?: LintRuleLevel;
+  };
 };
 
 /** A lightweight custom lint callback executed after the built-in rules. */
 export type LintRulePlugin = (
   commit: CommitAnalysis,
 ) => void | LintIssue | ReadonlyArray<LintIssue>;
+
+/** A predicate that can skip linting for matching commit messages. */
+export type LintIgnorePredicate = (commit: CommitAnalysis) => boolean;
 
 /** Options for {@link lintCommit}. */
 export type LintOptions = {
@@ -159,6 +203,22 @@ export type LintOptions = {
    * disable a rule.
    */
   readonly rules?: LintRulesConfig;
+  /**
+   * Whether the built-in ignore predicates should skip special workflow commits.
+   *
+   * When enabled, messages such as `fixup!`, `squash!`, merge commits, and
+   * Git-generated revert commits are reported as valid without applying rules.
+   *
+   * Defaults to `false`.
+   */
+  readonly defaultIgnores?: boolean;
+  /**
+   * Optional custom ignore predicates evaluated before lint rules.
+   *
+   * If any predicate returns `true`, the message is reported as ignored and no
+   * rules or plugins are executed.
+   */
+  readonly ignores?: ReadonlyArray<LintIgnorePredicate>;
   /**
    * Optional custom lint callbacks executed after the built-in rules.
    *

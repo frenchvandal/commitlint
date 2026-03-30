@@ -48,3 +48,14 @@ Deno.test("analyzeCommit folds multiline breaking footers", () => {
     breaking: true,
   }]);
 });
+
+Deno.test("analyzeCommit keeps empty footer values", () => {
+  const commit = analyzeCommit("fix: patch bug\n\nBREAKING CHANGE: ");
+
+  assertEquals(commit.footers, [{
+    token: "BREAKING CHANGE",
+    separator: ": ",
+    value: "",
+    breaking: true,
+  }]);
+});

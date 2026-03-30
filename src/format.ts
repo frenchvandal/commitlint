@@ -65,7 +65,9 @@ export function formatReport(
   const errorCount = report.errors.length;
   const warningCount = report.warnings.length;
 
-  if (report.valid) {
+  if (report.ignored) {
+    lines.push(style("  - commit message was ignored", DIM, BOLD));
+  } else if (report.valid) {
     lines.push(style("  ✔ commit message is valid", GREEN, BOLD));
   } else {
     lines.push(

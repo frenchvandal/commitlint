@@ -4,21 +4,6 @@
  * @module
  */
 
-/** Commit types mirrored from `@commitlint/config-conventional`. */
-export const COMMITLINT_TYPE_LIST = [
-  "build",
-  "chore",
-  "ci",
-  "docs",
-  "feat",
-  "fix",
-  "perf",
-  "refactor",
-  "revert",
-  "style",
-  "test",
-] as const;
-
 /** The maximum header length mirrored from `@commitlint/config-conventional`. */
 export const COMMITLINT_HEADER_MAX_LENGTH = 100 as const;
 /** The maximum body line length mirrored from `@commitlint/config-conventional`. */
@@ -33,6 +18,6 @@ export const HEADER_PATTERN =
 export const GIT_COMMENT_PATTERN = /^#(?: |$)/;
 /** Matches footer lines like `Refs: #123` or `BREAKING CHANGE: ...`. */
 export const FOOTER_PATTERN =
-  /^(?:BREAKING CHANGE|BREAKING-CHANGE|[A-Za-z][A-Za-z-]*)(?:: | #).+/u;
+  /^(?:BREAKING CHANGE|BREAKING-CHANGE|[A-Za-z][A-Za-z-]*)(?::(?: |$)| #).*$/u;
 /** Matches a Unicode cased letter at the start of a string. */
 export const CASED_LETTER_PATTERN = /^[\p{Ll}\p{Lu}\p{Lt}]/u;

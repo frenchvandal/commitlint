@@ -18,7 +18,11 @@ export type CommitSections = {
 };
 
 const FOOTER_LINE_PATTERN =
-  /^(?<token>BREAKING CHANGE|BREAKING-CHANGE|[A-Za-z][A-Za-z-]*)(?<separator>: | #)(?<value>.*)$/u;
+  /^(?<token>BREAKING CHANGE|BREAKING-CHANGE|[A-Za-z][A-Za-z-]*)(?<separator>: |:| #)(?<value>.*)$/u;
+
+export type ParsedCommitFooter = CommitFooter & {
+  readonly lineOffset: number;
+};
 
 export function cleanCommitInput(input: string): string {
   return input
@@ -78,25 +82,43 @@ export function splitCommitMessage(input: string): CommitSections {
 export function parseFooterLines(
   lines: ReadonlyArray<string>,
 ): ReadonlyArray<CommitFooter> {
-  const footers: CommitFooter[] = [];
+  return parseFooterLinesWithOffsets(lines).map((footer) => ({
+    token: footer.token,
+    separator: footer.separator,
+    value: footer.value,
+    breaking: footer.breaking,
+  }));
+}
+
+export function parseFooterLinesWithOffsets(
+  lines: ReadonlyArray<string>,
+): ReadonlyArray<ParsedCommitFooter> {
+  const footers: ParsedCommitFooter[] = [];
   let current: CommitFooter | undefined;
+  let currentLineOffset = 0;
 
   const pushCurrent = () => {
     if (current !== undefined) {
-      footers.push(current);
+      footers.push({
+        ...current,
+        lineOffset: currentLineOffset,
+      });
       current = undefined;
     }
   };
 
-  for (const line of lines) {
+  for (const [lineOffset, line] of lines.entries()) {
     const match = FOOTER_LINE_PATTERN.exec(line);
 
     if (match !== null) {
       pushCurrent();
 
-      const groups = match.groups as Record<string, string>;
+      const groups = match.groups as Record<string, string | undefined>;
       const token = groups["token"] ?? "";
-      const separator = (groups["separator"] ?? ": ") as ": " | " #";
+      const rawSeparator = groups["separator"] ?? ": ";
+      const separator = (rawSeparator === ":" ? ": " : rawSeparator) as
+        | ": "
+        | " #";
       const value = groups["value"] ?? "";
 
       current = {
@@ -105,6 +127,7 @@ export function parseFooterLines(
         value,
         breaking: token === "BREAKING CHANGE" || token === "BREAKING-CHANGE",
       };
+      currentLineOffset = lineOffset;
       continue;
     }
 
