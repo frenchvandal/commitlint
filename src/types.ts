@@ -4,6 +4,18 @@
  * @module
  */
 
+export type {
+  CommitAstNode,
+  CommitLiteralNode,
+  CommitLiteralNodeType,
+  CommitMessage,
+  CommitNodeType,
+  CommitParentNode,
+  CommitParentNodeType,
+  CommitPoint,
+  CommitPosition,
+} from "./parser_types.ts";
+
 /** The severity level assigned to a lint issue. */
 export type Severity = "error" | "warning";
 
