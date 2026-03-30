@@ -1,6 +1,6 @@
 {
   "name": "@miscellaneous/commitlint",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "description": "Cross-runtime Conventional Commits parser and linter for Deno, Node.js, Bun, and Cloudflare Workers.",
   "exports": "./mod.ts",
