@@ -20,6 +20,21 @@ Deno.test("parseHeader accepts hyphenated types", () => {
   assertEquals(parsed?.scope, "api");
 });
 
+Deno.test("parseHeader accepts Unicode scopes and subjects", () => {
+  const parsed = parseHeader("feat(解析): ajoute la recherche 🔎");
+
+  assertEquals(parsed, {
+    type: "feat",
+    scope: "解析",
+    breaking: false,
+    subject: "ajoute la recherche 🔎",
+  });
+});
+
 Deno.test("parseHeader returns undefined for invalid headers", () => {
   assertEquals(parseHeader("feat add search endpoint"), undefined);
+});
+
+Deno.test("parseHeader rejects empty scopes", () => {
+  assertEquals(parseHeader("feat(): add search endpoint"), undefined);
 });

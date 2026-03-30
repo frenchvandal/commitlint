@@ -74,6 +74,9 @@ console.log(tree.children.map((node) => node.type));
 policy-oriented and returns a report instead of throwing, so it remains the
 right entrypoint when you need validation.
 
+Footer tokens accept either `:` or the git-style `space + #` separator, so both
+`Refs: #123` and `Refs #123` are recognized.
+
 ## API
 
 ### `lintCommit(input: string, options?: { preset?: "conventional-commits" | "commitlint" }): LintReport`

@@ -175,6 +175,38 @@ Deno.test("parseCommit preserves CRLF positions", () => {
   });
 });
 
+Deno.test("parseCommit preserves positions across Unicode text", () => {
+  const input =
+    "feat(解析): ajoute la recherche 🔎\n\ncorps élargi\n\nRefs #123";
+  const tree = parseCommit(input);
+
+  assertEquals(tree.children.map((child) => child.type), [
+    "summary",
+    "newline",
+    "body",
+    "newline",
+    "footer",
+  ]);
+
+  const summary = expectParent(tree.children[0]!, "summary");
+  const footer = expectParent(tree.children[4]!, "footer");
+
+  assertEquals(expectLiteral(summary.children[1]!, "scope").value, "解析");
+  assertEquals(
+    expectLiteral(summary.children[4]!, "text").value,
+    "ajoute la recherche 🔎",
+  );
+  assertEquals(expectLiteral(footer.children[1]!, "separator").value, " #");
+
+  visit(tree, (node) => {
+    if (!("value" in node) || node.position === undefined) {
+      return;
+    }
+
+    assertEquals(source(node, input), node.value);
+  });
+});
+
 Deno.test('parseCommit throws when ":" is missing', () => {
   assertThrows(
     () => {

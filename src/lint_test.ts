@@ -237,6 +237,34 @@ Deno.test("treats a footer without a body as a footer when no blank line is pres
   );
 });
 
+Deno.test("accepts git-style reference footers with the commitlint preset", () => {
+  const report = lintCommit("fix: handle edge case\n\nRefs #123", {
+    preset: "commitlint",
+  });
+
+  assertEquals(report.valid, true);
+  assertEquals(report.errors, []);
+  assertEquals(report.warnings, []);
+});
+
+Deno.test("handles Unicode subject casing with the commitlint preset", () => {
+  const lowerCase = lintCommit("fix: évite la régression", {
+    preset: "commitlint",
+  });
+  const upperCase = lintCommit("fix: Évite la régression", {
+    preset: "commitlint",
+  });
+
+  assertEquals(
+    lowerCase.errors.some((issue) => issue.rule === "subject-case"),
+    false,
+  );
+  assertEquals(
+    upperCase.errors.some((issue) => issue.rule === "subject-case"),
+    true,
+  );
+});
+
 Deno.test("checks body and footer line lengths separately with the commitlint preset", () => {
   const bodyReport = lintCommit(`fix: handle edge case\n\n${"a".repeat(101)}`, {
     preset: "commitlint",

@@ -231,8 +231,9 @@ function scope(scanner: Scanner): ParseResult<ScopeNode> {
 function body(scanner: Scanner): ParseResult<BodyNode> {
   const node = scanner.enter("body", [] as Node[]);
 
-  const parsedPreFooter = preFooter(scanner);
-  if (!(parsedPreFooter instanceof Error)) {
+  // Body parsing is speculative: if the remaining input is already a valid
+  // footer block, leave it untouched so the caller can parse footer nodes.
+  if (remainingInputIsFooterBlock(scanner)) {
     return scanner.abort(node);
   }
 
@@ -264,21 +265,26 @@ function body(scanner: Scanner): ParseResult<BodyNode> {
 }
 
 /*
- * <newline>*, <footer>+
+ * Check whether the remaining input can be parsed entirely as footers, with
+ * optional blank lines between the previous section and the first footer.
  */
-function preFooter(scanner: Scanner): ParseResult<true> {
-  const node = scanner.enter("pre-footer", [] as Node[]);
+function remainingInputIsFooterBlock(scanner: Scanner): boolean {
+  const checkpoint = scanner.position();
 
   while (!scanner.eof()) {
-    newline(scanner);
+    const parsedNewline = newline(scanner);
+    if (parsedNewline instanceof Error) {
+      // Footer blocks may start immediately after the previous line.
+    }
 
     const parsedFooter = footer(scanner);
     if (parsedFooter instanceof Error) {
-      return scanner.abort(node);
+      scanner.rewind(checkpoint);
+      return false;
     }
   }
 
-  scanner.exit(node);
+  scanner.rewind(checkpoint);
   return true;
 }
 
