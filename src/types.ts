@@ -23,6 +23,25 @@ export type LintRuleLevel = Severity | "off";
 
 /** Built-in lint presets supported by {@link lintCommit}. */
 export type LintPreset = "conventional-commits" | "commitlint";
+/** The stable names of the built-in lint rules. */
+export type LintBuiltinRuleName =
+  | "header-pattern"
+  | "header-trim"
+  | "type-enum"
+  | "type-case"
+  | "scope-enum"
+  | "scope-case"
+  | "scope-empty"
+  | "subject-case"
+  | "subject-full-stop"
+  | "header-max-length"
+  | "body-max-line-length"
+  | "footer-max-line-length"
+  | "body-leading-blank"
+  | "footer-leading-blank"
+  | "footer-token-enum"
+  | "footer-token-required"
+  | "breaking-change-description-required";
 
 /** Metadata describing a known commit type. */
 export type CommitTypeDefinition = {
@@ -102,6 +121,59 @@ export type LintReport = {
   readonly analysis?: CommitAnalysis;
 };
 
+/** Primitive option values surfaced by {@link resolveLintRules}. */
+export type LintRuleOptionValue =
+  | boolean
+  | number
+  | string
+  | ReadonlyArray<string>;
+
+/** Metadata describing a built-in lint rule. */
+export type LintBuiltinRuleDefinition = {
+  /** The stable built-in rule name. */
+  readonly name: LintBuiltinRuleName;
+  /** A concise human-readable description of the rule. */
+  readonly description: string;
+  /** Whether callers can tune or disable the rule through {@link LintOptions.rules}. */
+  readonly configurable: boolean;
+};
+
+/** A built-in lint rule after presets and overrides have been resolved. */
+export type ResolvedLintRule = LintBuiltinRuleDefinition & {
+  /** The effective level after applying the preset and any overrides. */
+  readonly level: LintRuleLevel;
+  /** Effective rule options, when the rule accepts additional values. */
+  readonly options?: Readonly<Record<string, LintRuleOptionValue>>;
+};
+
+/** The effective built-in lint rules for a resolved preset and override set. */
+export type ResolvedLintConfig = {
+  /** The preset selected for the resolved rule set. */
+  readonly preset: LintPreset;
+  /** The built-in rules in their stable evaluation order. */
+  readonly rules: ReadonlyArray<ResolvedLintRule>;
+};
+
+/** The aggregate result returned by {@link lintCommits}. */
+export type LintBatchReport = {
+  /** Whether every linted message was valid or ignored. */
+  readonly valid: boolean;
+  /** The number of commit messages passed to the batch linter. */
+  readonly totalCount: number;
+  /** The number of reports that contain no errors, including ignored messages. */
+  readonly validCount: number;
+  /** The number of reports that contain at least one error. */
+  readonly invalidCount: number;
+  /** The number of reports skipped by ignore predicates. */
+  readonly ignoredCount: number;
+  /** The total number of error-level issues across all reports. */
+  readonly errorCount: number;
+  /** The total number of warning-level issues across all reports. */
+  readonly warningCount: number;
+  /** The per-message lint reports in input order. */
+  readonly reports: ReadonlyArray<LintReport>;
+};
+
 /** Typed overrides for the built-in lint rules. */
 export type LintRulesConfig = {
   /** Override the `type-enum` rule. */
@@ -162,6 +234,7 @@ export type LintRulesConfig = {
   /** Override the `footer-token-enum` rule. */
   readonly "footer-token-enum"?: {
     readonly level?: LintRuleLevel;
+    /** Include breaking-change footer tokens explicitly when you want to allow them. */
     readonly allowedTokens?: ReadonlyArray<string>;
     readonly suggest?: boolean;
   };
@@ -200,7 +273,9 @@ export type LintOptions = {
    * Optional typed overrides for the built-in lint rules.
    *
    * Rules are merged on top of the selected preset. Set `level: "off"` to
-   * disable a rule.
+   * disable a rule. When an override enables a rule that is inactive in the
+   * selected preset and omits `level`, the rule falls back to the default
+   * severity used by the `"commitlint"` preset.
    */
   readonly rules?: LintRulesConfig;
   /**

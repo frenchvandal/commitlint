@@ -5,23 +5,18 @@
  */
 
 import { CASED_LETTER_PATTERN } from "./constants.ts";
+import { resolveLintConfig } from "./_internal/lint_config.ts";
 import type { CommitSections, ParsedCommitFooter } from "./message.ts";
 import { parseFooterLinesWithOffsets, splitCommitMessage } from "./message.ts";
 import { parseHeader } from "./parse.ts";
-import {
-  DEFAULT_LINT_PRESET,
-  LINT_PRESET_CONFIGS,
-  type LintPresetConfig,
-} from "./presets.ts";
 import type {
   CommitAnalysis,
+  LintBatchReport,
   LintIgnorePredicate,
   LintIssue,
   LintIssueLocation,
   LintOptions,
-  LintPreset,
   LintReport,
-  Severity,
 } from "./types.ts";
 
 const DEFAULT_IGNORE_PREDICATES: ReadonlyArray<LintIgnorePredicate> = [
@@ -112,230 +107,9 @@ function getClosestAllowedValue(
   return bestDistance <= maxDistance ? suggestion : undefined;
 }
 
-function getLintPresetConfig(preset: LintPreset) {
-  return LINT_PRESET_CONFIGS[preset];
-}
-
-function mergeSeverityRule(
-  base: { readonly severity: Severity } | undefined,
-  override: { readonly level?: Severity | "off" } | undefined,
-  fallback: { readonly severity: Severity } | undefined,
-) {
-  if (override === undefined) return base;
-  if (override.level === "off") return undefined;
-
-  const template = base ?? fallback;
-  if (template === undefined) {
-    return override.level === undefined
-      ? undefined
-      : { severity: override.level };
-  }
-
-  return {
-    severity: override.level ?? template.severity,
-  };
-}
-
-function mergeMaxLengthRule(
-  base: { readonly severity: Severity; readonly max: number } | undefined,
-  override:
-    | { readonly level?: Severity | "off"; readonly max?: number }
-    | undefined,
-  fallback: { readonly severity: Severity; readonly max: number } | undefined,
-) {
-  if (override === undefined) return base;
-  if (override.level === "off") return undefined;
-
-  const template = base ?? fallback;
-  if (template === undefined) {
-    if (override.max === undefined) return undefined;
-
-    return {
-      severity: override.level ?? "error",
-      max: override.max,
-    };
-  }
-
-  return {
-    severity: override.level ?? template.severity,
-    max: override.max ?? template.max,
-  };
-}
-
-function mergeEnumRule(
-  base:
-    | {
-      readonly severity: Severity;
-      readonly allowed: ReadonlyArray<string>;
-      readonly suggest: boolean;
-    }
-    | undefined,
-  override:
-    | {
-      readonly level?: Severity | "off";
-      readonly allowed?: ReadonlyArray<string>;
-      readonly suggest?: boolean;
-    }
-    | undefined,
-  fallback:
-    | {
-      readonly severity: Severity;
-      readonly allowed: ReadonlyArray<string>;
-      readonly suggest: boolean;
-    }
-    | undefined,
-) {
-  if (override === undefined) return base;
-  if (override.level === "off") return undefined;
-
-  const template = base ?? fallback;
-  if (template === undefined) {
-    if (override.allowed === undefined) return undefined;
-
-    return {
-      severity: override.level ?? "error",
-      allowed: override.allowed,
-      suggest: override.suggest ?? true,
-    };
-  }
-
-  return {
-    severity: override.level ?? template.severity,
-    allowed: override.allowed ?? template.allowed,
-    suggest: override.suggest ?? template.suggest,
-  };
-}
-
-function mergeRequiredTokensRule(
-  base:
-    | { readonly severity: Severity; readonly tokens: ReadonlyArray<string> }
-    | undefined,
-  override:
-    | {
-      readonly level?: Severity | "off";
-      readonly tokens?: ReadonlyArray<string>;
-    }
-    | undefined,
-  fallback:
-    | { readonly severity: Severity; readonly tokens: ReadonlyArray<string> }
-    | undefined,
-) {
-  if (override === undefined) return base;
-  if (override.level === "off") return undefined;
-
-  const template = base ?? fallback;
-  if (template === undefined) {
-    if (override.tokens === undefined) return undefined;
-
-    return {
-      severity: override.level ?? "error",
-      tokens: override.tokens,
-    };
-  }
-
-  return {
-    severity: override.level ?? template.severity,
-    tokens: override.tokens ?? template.tokens,
-  };
-}
-
-function resolveLintConfig(options: LintOptions): LintPresetConfig {
-  const preset = options.preset ?? DEFAULT_LINT_PRESET;
-  const base = getLintPresetConfig(preset);
-  const fallback = LINT_PRESET_CONFIGS["commitlint"];
-  const rules = options.rules;
-
-  if (rules === undefined) return base;
-
-  return {
-    typeEnum: mergeEnumRule(
-      base.typeEnum,
-      rules["type-enum"] === undefined ? undefined : {
-        level: rules["type-enum"].level,
-        allowed: rules["type-enum"].allowedTypes,
-        suggest: rules["type-enum"].suggest,
-      },
-      fallback.typeEnum,
-    ),
-    typeCase: mergeSeverityRule(
-      base.typeCase,
-      rules["type-case"],
-      fallback.typeCase,
-    ),
-    scopeEnum: mergeEnumRule(
-      base.scopeEnum,
-      rules["scope-enum"] === undefined ? undefined : {
-        level: rules["scope-enum"].level,
-        allowed: rules["scope-enum"].allowedScopes,
-        suggest: rules["scope-enum"].suggest,
-      },
-      fallback.scopeEnum,
-    ),
-    scopeCase: mergeSeverityRule(
-      base.scopeCase,
-      rules["scope-case"],
-      fallback.scopeCase,
-    ),
-    scopeEmpty: mergeSeverityRule(
-      base.scopeEmpty,
-      rules["scope-empty"],
-      fallback.scopeEmpty,
-    ),
-    subjectCase: mergeSeverityRule(
-      base.subjectCase,
-      rules["subject-case"],
-      fallback.subjectCase,
-    ),
-    subjectFullStop: mergeSeverityRule(
-      base.subjectFullStop,
-      rules["subject-full-stop"],
-      fallback.subjectFullStop,
-    ),
-    headerMaxLength: mergeMaxLengthRule(
-      base.headerMaxLength,
-      rules["header-max-length"],
-      fallback.headerMaxLength,
-    ),
-    bodyMaxLineLength: mergeMaxLengthRule(
-      base.bodyMaxLineLength,
-      rules["body-max-line-length"],
-      fallback.bodyMaxLineLength,
-    ),
-    footerMaxLineLength: mergeMaxLengthRule(
-      base.footerMaxLineLength,
-      rules["footer-max-line-length"],
-      fallback.footerMaxLineLength,
-    ),
-    bodyLeadingBlank: mergeSeverityRule(
-      base.bodyLeadingBlank,
-      rules["body-leading-blank"],
-      fallback.bodyLeadingBlank,
-    ),
-    footerLeadingBlank: mergeSeverityRule(
-      base.footerLeadingBlank,
-      rules["footer-leading-blank"],
-      fallback.footerLeadingBlank,
-    ),
-    footerTokenEnum: mergeEnumRule(
-      base.footerTokenEnum,
-      rules["footer-token-enum"] === undefined ? undefined : {
-        level: rules["footer-token-enum"].level,
-        allowed: rules["footer-token-enum"].allowedTokens,
-        suggest: rules["footer-token-enum"].suggest,
-      },
-      fallback.footerTokenEnum,
-    ),
-    footerTokenRequired: mergeRequiredTokensRule(
-      base.footerTokenRequired,
-      rules["footer-token-required"],
-      fallback.footerTokenRequired,
-    ),
-    breakingChangeDescriptionRequired: mergeSeverityRule(
-      base.breakingChangeDescriptionRequired,
-      rules["breaking-change-description-required"],
-      fallback.breakingChangeDescriptionRequired,
-    ),
-  };
+function takeFirstLine(input: string): string {
+  const lineBreakIndex = input.search(/\r\n|\r|\n/u);
+  return lineBreakIndex === -1 ? input : input.slice(0, lineBreakIndex);
 }
 
 function headerLocation(header: string): LintIssueLocation {
@@ -398,6 +172,89 @@ function buildCommitAnalysis(
 }
 
 /**
+ * Validate only the first header line of a Conventional Commit.
+ *
+ * This is useful for pull request titles, squash-merge titles, editor inputs,
+ * or any workflow that validates a commit summary without a body or footer.
+ * Additional lines in the provided input are ignored.
+ *
+ * @param input The header line to lint.
+ * @param options Optional lint settings merged on top of the selected preset.
+ * @returns A lint report for the first line of the provided input.
+ *
+ * @example
+ * ```ts
+ * import { lintHeader } from "@miscellaneous/commitlint";
+ *
+ * const report = lintHeader("feat(ui): add search");
+ *
+ * console.log(report.valid); // true
+ * console.log(report.analysis?.body); // undefined
+ * ```
+ */
+export function lintHeader(
+  input: string,
+  options: LintOptions = {},
+): LintReport {
+  return lintCommit(takeFirstLine(input), options);
+}
+
+/**
+ * Validate multiple commit messages and return an aggregate summary.
+ *
+ * The batch linter keeps the library runtime-agnostic by operating on caller-
+ * provided strings instead of reading from Git. This makes it a good fit for
+ * CI wrappers, release tooling, and pull-request validation pipelines.
+ *
+ * @param inputs The commit messages to lint, in input order.
+ * @param options Optional lint settings shared across every message.
+ * @returns Aggregate counts plus the per-message reports.
+ *
+ * @example
+ * ```ts
+ * import { lintCommits } from "@miscellaneous/commitlint";
+ *
+ * const batch = lintCommits([
+ *   "feat(api): add search",
+ *   "wip: ship it",
+ * ], {
+ *   preset: "commitlint",
+ * });
+ *
+ * console.log(batch.valid); // false
+ * console.log(batch.invalidCount); // 1
+ * ```
+ */
+export function lintCommits(
+  inputs: ReadonlyArray<string>,
+  options: LintOptions = {},
+): LintBatchReport {
+  const reports = inputs.map((input) => lintCommit(input, options));
+  let validCount = 0;
+  let ignoredCount = 0;
+  let errorCount = 0;
+  let warningCount = 0;
+
+  for (const report of reports) {
+    if (report.valid) validCount += 1;
+    if (report.ignored) ignoredCount += 1;
+    errorCount += report.errors.length;
+    warningCount += report.warnings.length;
+  }
+
+  return {
+    valid: reports.every((report) => report.valid),
+    totalCount: reports.length,
+    validCount,
+    invalidCount: reports.length - validCount,
+    ignoredCount,
+    errorCount,
+    warningCount,
+    reports,
+  };
+}
+
+/**
  * Validate a commit message and return a structured lint report.
  *
  * @param input The raw commit message to lint.
@@ -425,6 +282,7 @@ export function lintCommit(
   const rules = resolveLintConfig(options);
   const { body, bodyStart, cleaned, footer, footerStart, header, lines } =
     splitCommitMessage(input);
+  const trimmedHeader = header.trim();
   const parsed = parseHeader(header);
   const footerEntries = parseFooterLinesWithOffsets(footer);
   const analysis = buildCommitAnalysis(
@@ -456,31 +314,32 @@ export function lintCommit(
     };
   }
 
-  if (
-    rules.headerMaxLength !== undefined &&
-    header.length > rules.headerMaxLength.max
-  ) {
-    addIssue(
-      issues,
-      "header-max-length",
-      rules.headerMaxLength.severity,
-      `Header must not exceed ${rules.headerMaxLength.max} characters (got ${header.length}).`,
-      {
-        section: "header",
-        line: 1,
-        column: rules.headerMaxLength.max + 1,
-        length: header.length - rules.headerMaxLength.max,
-      },
-    );
-  }
-
-  if (header !== header.trim()) {
+  if (header !== trimmedHeader) {
     addIssue(
       issues,
       "header-trim",
       "error",
       "Header must not have leading or trailing whitespace.",
       headerLocation(header),
+    );
+  }
+
+  if (
+    rules.headerMaxLength !== undefined &&
+    trimmedHeader.length > rules.headerMaxLength.max
+  ) {
+    const leadingWhitespaceLength = header.length - header.trimStart().length;
+    addIssue(
+      issues,
+      "header-max-length",
+      rules.headerMaxLength.severity,
+      `Header must not exceed ${rules.headerMaxLength.max} characters (got ${trimmedHeader.length}).`,
+      {
+        section: "header",
+        line: 1,
+        column: leadingWhitespaceLength + rules.headerMaxLength.max + 1,
+        length: trimmedHeader.length - rules.headerMaxLength.max,
+      },
     );
   }
 

@@ -1,6 +1,11 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 
-import { DEFAULT_COMMIT_TYPES, lintCommit } from "../mod.ts";
+import {
+  DEFAULT_COMMIT_TYPES,
+  lintCommit,
+  lintCommits,
+  lintHeader,
+} from "../mod.ts";
 
 Deno.test("accepts a valid commit header with the default preset", () => {
   const report = lintCommit("feat(parser): add array support");
@@ -102,6 +107,25 @@ Deno.test("rejects headers with surrounding whitespace", () => {
   assertEquals(
     report.errors.some((issue) => issue.rule === "header-trim"),
     true,
+  );
+});
+
+Deno.test("measures header length after trimming surrounding whitespace", () => {
+  const report = lintCommit(" feat: ok", {
+    rules: {
+      "header-max-length": {
+        max: 8,
+      },
+    },
+  });
+
+  assertEquals(
+    report.errors.some((issue) => issue.rule === "header-trim"),
+    true,
+  );
+  assertEquals(
+    report.errors.some((issue) => issue.rule === "header-max-length"),
+    false,
   );
 });
 
@@ -411,6 +435,24 @@ Deno.test("supports footer token rules via typed overrides", () => {
     false,
     "footer-token-required must not fire when tokens list is empty",
   );
+
+  const breakingTokenReport = lintCommit(
+    "feat: add search\n\nBREAKING CHANGE: API changed",
+    {
+      rules: {
+        "footer-token-enum": {
+          allowedTokens: ["Refs"],
+        },
+      },
+    },
+  );
+  assertEquals(
+    breakingTokenReport.errors.some((issue) =>
+      issue.rule === "footer-token-enum"
+    ),
+    true,
+    "footer-token-enum must validate BREAKING CHANGE unless it is explicitly allowed",
+  );
 });
 
 Deno.test("requires a descriptive BREAKING CHANGE footer when configured", () => {
@@ -552,4 +594,39 @@ Deno.test("runs custom lint callbacks against the semantic analysis", () => {
       column: 1,
     },
   }]);
+});
+
+Deno.test("lintHeader validates only the first line", () => {
+  const report = lintHeader("fix: add search.\n\nRefs: #123", {
+    preset: "commitlint",
+  });
+
+  assertEquals(report.valid, false);
+  assertEquals(
+    report.errors.some((issue) => issue.rule === "subject-full-stop"),
+    true,
+  );
+  assertEquals(report.analysis?.body, undefined);
+  assertEquals(report.analysis?.footer, undefined);
+});
+
+Deno.test("lintCommits aggregates reports and counts", () => {
+  const batch = lintCommits([
+    "feat(api): add search",
+    "fixup! feat: add search",
+    "wip: ship it",
+  ], {
+    preset: "commitlint",
+    defaultIgnores: true,
+  });
+
+  assertEquals(batch.valid, false);
+  assertEquals(batch.totalCount, 3);
+  assertEquals(batch.validCount, 2);
+  assertEquals(batch.invalidCount, 1);
+  assertEquals(batch.ignoredCount, 1);
+  assertEquals(batch.errorCount >= 1, true);
+  assertEquals(batch.warningCount, 0);
+  assertEquals(batch.reports.length, 3);
+  assertEquals(batch.reports[1]?.ignored, true);
 });

@@ -9,12 +9,15 @@ Cloudflare Workers.
 - Keeps a zero-dependency, 100% TypeScript runtime surface.
 - Parses commit messages into a syntax tree with source positions.
 - Analyzes commit messages into semantic sections without throwing.
+- Lints commit headers directly for PR title and squash-title workflows.
+- Lints batches of commit messages without depending on Git or a runtime.
 - Defaults to the core Conventional Commits specification.
 - Provides an optional `commitlint` preset that mirrors
   `@commitlint/config-conventional`.
 - Supports typed rule overrides for scopes and footer tokens.
 - Supports opt-in ignore policies for workflow commits such as `fixup!`.
 - Exports built-in commit type metadata for editor and UI integrations.
+- Exposes built-in lint rule metadata and resolved preset configs.
 - Supports custom lint callbacks with no runtime dependencies.
 - Publishes a library-only surface to JSR.
 
@@ -37,24 +40,39 @@ npx jsr add @miscellaneous/commitlint
 ```ts
 import {
   analyzeCommit,
+  BUILTIN_LINT_RULES,
   DEFAULT_COMMIT_TYPES,
   formatReport,
   lintCommit,
+  lintCommits,
+  lintHeader,
   parseCommit,
   parseHeader,
+  resolveLintRules,
 } from "jsr:@miscellaneous/commitlint";
 
 const report = lintCommit("feat: add search");
+const titleReport = lintHeader("feat(api): add search");
+const batch = lintCommits(["feat: add search", "wip: ship it"], {
+  preset: "commitlint",
+});
 const tree = parseCommit("feat(api): add search");
 const commit = analyzeCommit("feat(api)!: add search\n\nRefs: #123");
 const header = parseHeader("feat(api): add search");
+const rules = resolveLintRules({ preset: "commitlint" });
 
 console.log(report.valid); // true
+console.log(titleReport.valid); // true
+console.log(batch.invalidCount); // 1
 console.log(formatReport(report));
 console.log(tree.children[0]?.type); // "summary"
 console.log(commit.footers[0]?.token); // "Refs"
 console.log(header?.scope); // "api"
-console.log(DEFAULT_COMMIT_TYPES[4]?.name); // "feat"
+console.log(DEFAULT_COMMIT_TYPES.find((type) => type.name === "feat")?.name);
+// "feat"
+console.log(BUILTIN_LINT_RULES[0]?.name); // "header-pattern"
+console.log(rules.rules.find((rule) => rule.name === "type-enum")?.level);
+// "error"
 ```
 
 Use typed rule overrides on top of a preset:
@@ -116,6 +134,58 @@ console.log(report.ignored); // true
 console.log(report.valid); // true
 ```
 
+Lint only the header line when you are validating pull request titles:
+
+```ts
+import { lintHeader } from "jsr:@miscellaneous/commitlint";
+
+const report = lintHeader("feat(api): add search.", {
+  preset: "commitlint",
+});
+
+console.log(report.valid); // false
+console.log(report.errors[0]?.rule); // "subject-full-stop"
+```
+
+Lint multiple commit messages in one pass:
+
+```ts
+import { lintCommits } from "jsr:@miscellaneous/commitlint";
+
+const batch = lintCommits([
+  "feat(api): add search",
+  "fixup! feat(api): add search",
+  "wip: ship it",
+], {
+  preset: "commitlint",
+  defaultIgnores: true,
+});
+
+console.log(batch.totalCount); // 3
+console.log(batch.ignoredCount); // 1
+console.log(batch.invalidCount); // 1
+```
+
+Inspect the effective built-in rules for a preset:
+
+```ts
+import { resolveLintRules } from "jsr:@miscellaneous/commitlint";
+
+const resolved = resolveLintRules({
+  preset: "commitlint",
+  rules: {
+    "scope-enum": {
+      level: "warning",
+      allowedScopes: ["api", "parser"],
+    },
+  },
+});
+
+console.log(resolved.preset); // "commitlint"
+console.log(resolved.rules.find((rule) => rule.name === "scope-enum")?.level);
+// "warning"
+```
+
 Parse a message without applying lint rules:
 
 ```ts
@@ -138,6 +208,9 @@ validation.
 Footer tokens accept either `:` or the git-style `space + #` separator, so both
 `Refs: #123` and `Refs #123` are recognized.
 
+When you configure `footer-token-enum`, include any breaking-change tokens you
+want to allow explicitly, such as `BREAKING CHANGE` or `BREAKING-CHANGE`.
+
 ## API
 
 ### `lintCommit(input: string, options?: LintOptions): LintReport`
@@ -154,7 +227,9 @@ Available presets:
 `LintOptions` also supports:
 
 - `rules`: typed overrides for built-in rules, merged on top of the selected
-  preset.
+  preset. When an override enables a rule that is inactive in the selected
+  preset and omits `level`, the rule falls back to the default severity used by
+  the `commitlint` preset.
 - `defaultIgnores`: opt-in built-in ignore predicates for workflow commits such
   as `fixup!`, `squash!`, merge commits, and revert commits.
 - `ignores`: custom predicates that can short-circuit linting for matching
@@ -163,6 +238,18 @@ Available presets:
 
 When a message matches an ignore predicate, `LintReport.ignored` is `true` and
 the report is returned as valid without running rules or plugins.
+
+### `lintHeader(input: string, options?: LintOptions): LintReport`
+
+Validate only the first line of a Conventional Commit. This is useful for pull
+request titles, squash-merge titles, or editor flows that work with commit
+headers only. Any additional lines in the provided input are ignored.
+
+### `lintCommits(inputs: ReadonlyArray<string>, options?: LintOptions): LintBatchReport`
+
+Validate multiple commit messages and return aggregate counts plus the
+per-message reports. This keeps the library runtime-agnostic by leaving Git
+history access to wrappers and caller code.
 
 ### `formatReport(report: LintReport, options?: { color?: boolean }): string`
 
@@ -177,6 +264,17 @@ Analyze a commit message into semantic sections without applying lint rules.
 Expose the built-in commit type catalog mirrored from
 `@commitlint/config-conventional`, with descriptions suitable for editor and UI
 integrations.
+
+### `BUILTIN_LINT_RULES: ReadonlyArray<LintBuiltinRuleDefinition>`
+
+Expose metadata for the built-in lint rules, including their stable names,
+descriptions, and whether they are configurable through `LintOptions.rules`.
+
+### `resolveLintRules(options?: LintOptions): ResolvedLintConfig`
+
+Resolve the effective built-in lint rules for a preset and override set. This is
+useful for wrappers, UIs, and tests that need to inspect the final built-in rule
+configuration before linting.
 
 ### `parseHeader(input: string): ParsedHeader | undefined`
 
