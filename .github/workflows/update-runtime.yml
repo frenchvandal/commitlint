@@ -1,0 +1,164 @@
+name: Update Runtime Versions
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+      timezone: "Asia/Shanghai"
+  workflow_dispatch:
+
+concurrency:
+  group: update-runtime-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: latest
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: latest
+          package-manager-cache: false
+
+      - id: versions
+        name: Print runtime versions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bun_version="$(bun -v)"
+          echo "$bun_version"
+
+          deno_output="$(deno -v)"
+          printf '%s\n' "$deno_output"
+          deno_version="$(printf '%s\n' "$deno_output" | sed -n '1s/^deno //p')"
+
+          node_output="$(node -v)"
+          printf '%s\n' "$node_output"
+          node_version="${node_output#v}"
+
+          {
+            echo "bun=$bun_version"
+            echo "deno=$deno_version"
+            echo "nodejs=$node_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: update_tool_versions
+        name: Update .tool-versions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_bun="$(sed -n 's/^bun[[:space:]]\+\(.*\)$/\1/p' .tool-versions | head -n 1)"
+          current_deno="$(sed -n 's/^deno[[:space:]]\+\(.*\)$/\1/p' .tool-versions | head -n 1)"
+          current_nodejs="$(sed -n 's/^nodejs[[:space:]]\+\(.*\)$/\1/p' .tool-versions | head -n 1)"
+
+          new_bun='${{ steps.versions.outputs.bun }}'
+          new_deno='${{ steps.versions.outputs.deno }}'
+          new_nodejs='${{ steps.versions.outputs.nodejs }}'
+
+          changed=false
+
+          if [ "$current_bun" != "$new_bun" ] ||
+            [ "$current_deno" != "$new_deno" ] ||
+            [ "$current_nodejs" != "$new_nodejs" ]; then
+            changed=true
+
+            awk \
+              -v bun_version="$new_bun" \
+              -v deno_version="$new_deno" \
+              -v nodejs_version="$new_nodejs" '
+                BEGIN {
+                  seen["bun"] = 0
+                  seen["deno"] = 0
+                  seen["nodejs"] = 0
+                }
+                $1 == "bun" {
+                  print "bun " bun_version
+                  seen["bun"] = 1
+                  next
+                }
+                $1 == "deno" {
+                  print "deno " deno_version
+                  seen["deno"] = 1
+                  next
+                }
+                $1 == "nodejs" {
+                  print "nodejs " nodejs_version
+                  seen["nodejs"] = 1
+                  next
+                }
+                {
+                  print
+                }
+                END {
+                  if (!seen["bun"]) {
+                    print "bun " bun_version
+                  }
+                  if (!seen["deno"]) {
+                    print "deno " deno_version
+                  }
+                  if (!seen["nodejs"]) {
+                    print "nodejs " nodejs_version
+                  }
+                }
+              ' .tool-versions > .tool-versions.tmp
+
+            mv .tool-versions.tmp .tool-versions
+          fi
+
+          {
+            echo "changed=$changed"
+            echo "current_bun=$current_bun"
+            echo "current_deno=$current_deno"
+            echo "current_nodejs=$current_nodejs"
+            echo "new_bun=$new_bun"
+            echo "new_deno=$new_deno"
+            echo "new_nodejs=$new_nodejs"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: commit
+        if: steps.update_tool_versions.outputs.changed == 'true'
+        name: Commit and push .tool-versions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add .tool-versions
+          git commit -m "chore: update runtime versions"
+          git push origin "HEAD:${{ github.ref_name }}"
+
+      - name: Write runtime update summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Runtime Update Summary"
+            echo
+            echo "- Ref: \`${GITHUB_REF}\`"
+            echo "- Bun: \`${{ steps.update_tool_versions.outputs.current_bun }}\` -> \`${{ steps.update_tool_versions.outputs.new_bun }}\`"
+            echo "- Deno: \`${{ steps.update_tool_versions.outputs.current_deno }}\` -> \`${{ steps.update_tool_versions.outputs.new_deno }}\`"
+            echo "- Node.js: \`${{ steps.update_tool_versions.outputs.current_nodejs }}\` -> \`${{ steps.update_tool_versions.outputs.new_nodejs }}\`"
+            echo "- Updated .tool-versions: \`${{ steps.update_tool_versions.outputs.changed }}\`"
+            echo "- Commit step: \`${{ steps.commit.outcome || 'skipped' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
