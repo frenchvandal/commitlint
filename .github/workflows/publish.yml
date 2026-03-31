@@ -23,7 +23,7 @@ jobs:
       previous_version: ${{ steps.compare.outputs.previous_version }}
       version_changed: ${{ steps.compare.outputs.version_changed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - id: compare
