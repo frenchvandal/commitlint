@@ -147,6 +147,11 @@ export function resolveLintConfig(options: LintOptions): LintPresetConfig {
   if (rules === undefined) return base;
 
   return {
+    typeEmpty: mergeSeverityRule(
+      base.typeEmpty,
+      rules["type-empty"],
+      fallback.typeEmpty,
+    ),
     typeEnum: mergeEnumRule(
       base.typeEnum,
       rules["type-enum"] === undefined ? undefined : {
@@ -179,6 +184,11 @@ export function resolveLintConfig(options: LintOptions): LintPresetConfig {
       base.scopeEmpty,
       rules["scope-empty"],
       fallback.scopeEmpty,
+    ),
+    subjectEmpty: mergeSeverityRule(
+      base.subjectEmpty,
+      rules["subject-empty"],
+      fallback.subjectEmpty,
     ),
     subjectCase: mergeSeverityRule(
       base.subjectCase,

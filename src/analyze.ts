@@ -6,7 +6,7 @@
 
 import { parseFooterLines, splitCommitMessage } from "./message.ts";
 import { parseHeader } from "./parse.ts";
-import type { CommitAnalysis } from "./types.ts";
+import type { AnalyzeOptions, CommitAnalysis } from "./types.ts";
 
 /**
  * Analyze a commit message into semantic sections without applying lint rules.
@@ -16,6 +16,7 @@ import type { CommitAnalysis } from "./types.ts";
  * editor tooling, custom rules, or UI previews.
  *
  * @param input The raw commit message to analyze.
+ * @param options Optional scope-parsing settings for multi-scope headers.
  * @returns The cleaned message, parsed header summary, body text, and footers.
  *
  * @example
@@ -26,11 +27,14 @@ import type { CommitAnalysis } from "./types.ts";
  *   "feat(api)!: add search\n\nBREAKING CHANGE: clients must re-authenticate",
  * );
  *
- * console.log(commit.summary?.type); // "feat"
+ * console.log(commit.summary?.type); // “feat”
  * console.log(commit.footers[0]?.breaking); // true
  * ```
  */
-export function analyzeCommit(input: string): CommitAnalysis {
+export function analyzeCommit(
+  input: string,
+  options: AnalyzeOptions = {},
+): CommitAnalysis {
   const sections = splitCommitMessage(input);
   const body = sections.body.length === 0
     ? undefined
@@ -42,7 +46,7 @@ export function analyzeCommit(input: string): CommitAnalysis {
   return {
     input: sections.cleaned,
     header: sections.header,
-    summary: parseHeader(sections.header),
+    summary: parseHeader(sections.header.trim(), options),
     body,
     footer,
     footers: parseFooterLines(sections.footer),

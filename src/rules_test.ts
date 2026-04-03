@@ -12,11 +12,13 @@ Deno.test("exports built-in lint rule metadata in stable order", () => {
     [
       "header-pattern",
       "header-trim",
+      "type-empty",
       "type-enum",
       "type-case",
       "scope-enum",
       "scope-case",
       "scope-empty",
+      "subject-empty",
       "subject-case",
       "subject-full-stop",
       "header-max-length",
@@ -32,7 +34,7 @@ Deno.test("exports built-in lint rule metadata in stable order", () => {
   assertEquals(BUILTIN_LINT_RULES[0], {
     name: "header-pattern",
     description:
-      'Header must match Conventional Commits format: "<type>[optional scope]: <description>".',
+      "Header must match Conventional Commits format: “<type>[optional scope]: <description>”.",
     configurable: false,
   });
   assertEquals(BUILTIN_LINT_RULES.at(-1), {
@@ -56,6 +58,10 @@ Deno.test("resolveLintRules exposes the default resolved preset", () => {
     "error",
   );
   assertEquals(
+    resolved.rules.find((rule) => rule.name === "type-empty")?.level,
+    "error",
+  );
+  assertEquals(
     resolved.rules.find((rule) => rule.name === "type-enum")?.level,
     "off",
   );
@@ -72,6 +78,9 @@ Deno.test("resolveLintRules reflects preset defaults and typed overrides", () =>
       "scope-enum": {
         level: "warning",
         allowedScopes: ["api", "parser"],
+      },
+      "subject-empty": {
+        level: "warning",
       },
       "header-max-length": {
         max: 72,
@@ -99,6 +108,10 @@ Deno.test("resolveLintRules reflects preset defaults and typed overrides", () =>
         suggest: true,
       },
     },
+  );
+  assertEquals(
+    resolved.rules.find((rule) => rule.name === "subject-empty")?.level,
+    "warning",
   );
   assertEquals(
     resolved.rules.find((rule) => rule.name === "header-max-length")?.options,

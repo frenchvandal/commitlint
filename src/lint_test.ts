@@ -177,7 +177,16 @@ Deno.test("suggests the closest allowed type with the commitlint preset", () => 
     candidate.rule === "type-enum"
   );
 
-  assertStringIncludes(issue?.message ?? "", 'Did you mean "feat"?');
+  assertStringIncludes(issue?.message ?? "", "Did you mean “feat”?");
+  assertEquals(issue?.suggestions, [{
+    message: "Replace with “feat”.",
+    edit: {
+      line: 1,
+      column: 1,
+      length: 7,
+      replacement: "feat",
+    },
+  }]);
 });
 
 Deno.test("exports a public catalog of default commit types", () => {
@@ -375,6 +384,51 @@ Deno.test("supports scope lint rules via typed overrides", () => {
   );
 });
 
+Deno.test("supports multi-scope lint rules", () => {
+  const report = lintCommit("feat(API, docs): add search", {
+    rules: {
+      "scope-case": {
+        level: "error",
+      },
+      "scope-enum": {
+        allowedScopes: ["api", "parser"],
+      },
+    },
+  });
+
+  assertEquals(report.analysis?.summary?.scopes, ["API", "docs"]);
+  assertEquals(
+    report.errors.filter((issue) => issue.rule === "scope-case").map(
+      (issue) => issue.location,
+    ),
+    [{
+      section: "header",
+      line: 1,
+      column: 6,
+      length: 3,
+    }],
+  );
+  assertEquals(
+    report.errors.filter((issue) => issue.rule === "scope-enum").map(
+      (issue) => issue.location,
+    ),
+    [
+      {
+        section: "header",
+        line: 1,
+        column: 6,
+        length: 3,
+      },
+      {
+        section: "header",
+        line: 1,
+        column: 11,
+        length: 4,
+      },
+    ],
+  );
+});
+
 Deno.test("supports footer token rules via typed overrides", () => {
   const enumReport = lintCommit("feat: add search\n\nTicket: #123", {
     rules: {
@@ -490,6 +544,28 @@ Deno.test("requires a descriptive BREAKING CHANGE footer when configured", () =>
   );
 });
 
+Deno.test("reports missing type and subject separately", () => {
+  const missingType = lintCommit(": add search");
+  const missingSubject = lintCommit("feat:");
+
+  assertEquals(
+    missingType.errors.some((issue) => issue.rule === "type-empty"),
+    true,
+  );
+  assertEquals(
+    missingType.errors.some((issue) => issue.rule === "header-pattern"),
+    false,
+  );
+  assertEquals(
+    missingSubject.errors.some((issue) => issue.rule === "subject-empty"),
+    true,
+  );
+  assertEquals(
+    missingSubject.errors.some((issue) => issue.rule === "header-pattern"),
+    false,
+  );
+});
+
 Deno.test("can ignore special workflow commits with default ignores", () => {
   const ignored = lintCommit("fixup! feat: add search", {
     defaultIgnores: true,
@@ -596,6 +672,44 @@ Deno.test("runs custom lint callbacks against the semantic analysis", () => {
   }]);
 });
 
+Deno.test("validates custom footer schemas", () => {
+  const missingReport = lintCommit("feat: add search", {
+    footerSchema: [{
+      token: "Refs",
+      required: true,
+      requireValue: true,
+    }],
+  });
+  const invalidValueReport = lintCommit("feat: add search\n\nRefs: abc", {
+    footerSchema: [{
+      token: "Refs",
+      requireValue: true,
+      valuePattern: /^#\d+$/u,
+      valueDescription: '"#<number>"',
+    }],
+  });
+
+  assertEquals(
+    missingReport.errors.some((issue) => issue.rule === "footer-schema"),
+    true,
+  );
+  assertEquals(
+    invalidValueReport.errors.some((issue) =>
+      issue.message.includes('value must match "#<number>"')
+    ),
+    true,
+  );
+});
+
+Deno.test("includes help URLs in report metadata", () => {
+  const report = lintCommit("wip: ship it", {
+    preset: "commitlint",
+    helpUrl: "https://example.com/commits",
+  });
+
+  assertEquals(report.helpUrl, "https://example.com/commits");
+});
+
 Deno.test("lintHeader validates only the first line", () => {
   const report = lintHeader("fix: add search.\n\nRefs: #123", {
     preset: "commitlint",
@@ -629,4 +743,13 @@ Deno.test("lintCommits aggregates reports and counts", () => {
   assertEquals(batch.warningCount, 0);
   assertEquals(batch.reports.length, 3);
   assertEquals(batch.reports[1]?.ignored, true);
+});
+
+Deno.test("lintCommits copies help URLs into batch reports", () => {
+  const batch = lintCommits(["wip: ship it"], {
+    preset: "commitlint",
+    helpUrl: "https://example.com/commits",
+  });
+
+  assertEquals(batch.helpUrl, "https://example.com/commits");
 });

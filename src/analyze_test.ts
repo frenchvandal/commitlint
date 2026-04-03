@@ -10,6 +10,7 @@ Deno.test("analyzeCommit extracts semantic sections", () => {
   assertEquals(commit.summary, {
     type: "feat",
     scope: "api",
+    scopes: ["api"],
     breaking: true,
     subject: "add search",
   });
@@ -34,6 +35,13 @@ Deno.test("analyzeCommit keeps invalid headers best-effort", () => {
     value: "123",
     breaking: false,
   }]);
+});
+
+Deno.test("analyzeCommit parses multi-scope headers", () => {
+  const commit = analyzeCommit("feat(api, parser): add search");
+
+  assertEquals(commit.summary?.scope, "api, parser");
+  assertEquals(commit.summary?.scopes, ["api", "parser"]);
 });
 
 Deno.test("analyzeCommit folds multiline breaking footers", () => {

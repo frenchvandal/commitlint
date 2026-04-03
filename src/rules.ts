@@ -20,13 +20,18 @@ export const BUILTIN_LINT_RULES: ReadonlyArray<LintBuiltinRuleDefinition> = [
   {
     name: "header-pattern",
     description:
-      'Header must match Conventional Commits format: "<type>[optional scope]: <description>".',
+      "Header must match Conventional Commits format: “<type>[optional scope]: <description>”.",
     configurable: false,
   },
   {
     name: "header-trim",
     description: "Header must not have leading or trailing whitespace.",
     configurable: false,
+  },
+  {
+    name: "type-empty",
+    description: "Type is required.",
+    configurable: true,
   },
   {
     name: "type-enum",
@@ -51,6 +56,11 @@ export const BUILTIN_LINT_RULES: ReadonlyArray<LintBuiltinRuleDefinition> = [
   {
     name: "scope-empty",
     description: "Scope is required.",
+    configurable: true,
+  },
+  {
+    name: "subject-empty",
+    description: "Subject is required.",
     configurable: true,
   },
   {
@@ -138,7 +148,7 @@ function builtinRule(name: LintBuiltinRuleName): LintBuiltinRuleDefinition {
 
   if (definition === undefined) {
     throw new TypeError(
-      `Missing built-in lint rule definition for "${name}".`,
+      `Missing built-in lint rule definition for “${name}”.`,
     );
   }
 
@@ -169,9 +179,9 @@ function builtinRule(name: LintBuiltinRuleName): LintBuiltinRuleDefinition {
  *   },
  * });
  *
- * console.log(resolved.preset); // "commitlint"
+ * console.log(resolved.preset); // “commitlint”
  * console.log(resolved.rules.find((rule) => rule.name === "scope-enum")?.level);
- * // "warning"
+ * // “warning”
  * ```
  */
 export function resolveLintRules(
@@ -185,6 +195,10 @@ export function resolveLintRules(
     rules: [
       resolvedRule(builtinRule("header-pattern"), "error"),
       resolvedRule(builtinRule("header-trim"), "error"),
+      resolvedRule(
+        builtinRule("type-empty"),
+        rules.typeEmpty?.severity ?? "off",
+      ),
       resolvedRule(
         builtinRule("type-enum"),
         rules.typeEnum?.severity ?? "off",
@@ -209,6 +223,10 @@ export function resolveLintRules(
       resolvedRule(
         builtinRule("scope-empty"),
         rules.scopeEmpty?.severity ?? "off",
+      ),
+      resolvedRule(
+        builtinRule("subject-empty"),
+        rules.subjectEmpty?.severity ?? "off",
       ),
       resolvedRule(
         builtinRule("subject-case"),

@@ -1,7 +1,7 @@
 import { assertEquals, assertMatch } from "@std/assert";
 
-import { formatReport } from "./format.ts";
-import type { LintReport } from "./types.ts";
+import { formatBatchReport, formatReport } from "./format.ts";
+import type { LintBatchReport, LintReport } from "./types.ts";
 
 const VALID_REPORT: LintReport = {
   input: "feat: add search",
@@ -33,7 +33,7 @@ Deno.test("formatReport renders errors and warnings", () => {
       {
         rule: "type-enum",
         severity: "error",
-        message: 'Type "wip" is not allowed.',
+        message: "Type “wip” is not allowed.",
       },
     ],
     warnings: [
@@ -78,6 +78,27 @@ Deno.test("formatReport renders issue locations when available", () => {
   assertMatch(output, /\[header-max-length\] at header 1:73/);
 });
 
+Deno.test("formatReport renders suggestions and help URLs", () => {
+  const output = formatReport({
+    input: "feature: add search",
+    ignored: false,
+    valid: false,
+    errors: [{
+      rule: "type-enum",
+      severity: "error",
+      message: "Type “feature” is not allowed. Did you mean “feat”?",
+      suggestions: [{
+        message: "Replace with “feat”.",
+      }],
+    }],
+    warnings: [],
+    helpUrl: "https://example.com/commits",
+  }, { color: false });
+
+  assertMatch(output, /Replace with “feat”/);
+  assertMatch(output, /help: https:\/\/example.com\/commits/);
+});
+
 Deno.test("formatReport renders ignored reports", () => {
   const output = formatReport({
     input: "fixup! feat: add search",
@@ -88,4 +109,41 @@ Deno.test("formatReport renders ignored reports", () => {
   }, { color: false });
 
   assertMatch(output, /commit message was ignored/);
+});
+
+Deno.test("formatBatchReport renders aggregate summaries", () => {
+  const batch: LintBatchReport = {
+    valid: false,
+    totalCount: 2,
+    validCount: 1,
+    invalidCount: 1,
+    ignoredCount: 0,
+    errorCount: 1,
+    warningCount: 0,
+    reports: [{
+      input: "feat: add search",
+      ignored: false,
+      valid: true,
+      errors: [],
+      warnings: [],
+    }, {
+      input: "wip: ship it",
+      ignored: false,
+      valid: false,
+      errors: [{
+        rule: "type-enum",
+        severity: "error",
+        message: "Type “wip” is not allowed.",
+      }],
+      warnings: [],
+      helpUrl: "https://example.com/commits",
+    }],
+    helpUrl: "https://example.com/commits",
+  };
+
+  const output = formatBatchReport(batch, { color: false });
+
+  assertMatch(output, /commits checked: 2/);
+  assertMatch(output, /commit 2: wip: ship it/);
+  assertMatch(output, /help: https:\/\/example.com\/commits/);
 });

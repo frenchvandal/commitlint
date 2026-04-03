@@ -8,6 +8,7 @@ Deno.test("parseHeader extracts type, scope, and breaking marker", () => {
   assertEquals(parsed, {
     type: "feat",
     scope: "api",
+    scopes: ["api"],
     breaking: true,
     subject: "add search endpoint",
   });
@@ -26,9 +27,17 @@ Deno.test("parseHeader accepts Unicode scopes and subjects", () => {
   assertEquals(parsed, {
     type: "feat",
     scope: "解析",
+    scopes: ["解析"],
     breaking: false,
     subject: "ajoute la recherche 🔎",
   });
+});
+
+Deno.test("parseHeader splits multi-scope headers", () => {
+  const parsed = parseHeader("feat(api, parser): add search endpoint");
+
+  assertEquals(parsed?.scope, "api, parser");
+  assertEquals(parsed?.scopes, ["api", "parser"]);
 });
 
 Deno.test("parseHeader returns undefined for invalid headers", () => {

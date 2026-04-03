@@ -213,7 +213,7 @@ Deno.test('parseCommit throws when ":" is missing', () => {
       parseCommit("feat add support for scopes");
     },
     Error,
-    "unexpected token ' ' at 1:5, valid tokens [(, !, :]",
+    "unexpected token ‘ ’ at 1:5, valid tokens [(, !, :]",
   );
 });
 

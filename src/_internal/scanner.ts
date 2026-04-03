@@ -153,7 +153,7 @@ export class Scanner {
         `unexpected token EOF at ${position}, valid tokens [${validTokens}]`,
       )
       : new Error(
-        `unexpected token '${this.peek()}' at ${position}, valid tokens [${validTokens}]`,
+        `unexpected token ‘${this.peek()}’ at ${position}, valid tokens [${validTokens}]`,
       );
 
     if (node.position !== undefined) {

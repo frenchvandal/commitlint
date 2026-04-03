@@ -6,10 +6,12 @@
  * import {
  *   analyzeCommit,
  *   BUILTIN_LINT_RULES,
+ *   formatBatchReport,
  *   formatReport,
  *   lintCommits,
  *   lintCommit,
  *   lintHeader,
+ *   normalizeCommit,
  *   parseCommit,
  *   parseHeader,
  *   resolveLintRules,
@@ -20,6 +22,7 @@
  * const batch = lintCommits(["feat: add search", "wip: ship it"], {
  *   preset: "commitlint",
  * });
+ * const normalized = normalizeCommit(" Fix(API, Parser): Add search. ");
  * const tree = parseCommit("feat(api): add search");
  * const commit = analyzeCommit("feat(api): add search");
  * const header = parseHeader("feat(api): add search");
@@ -29,17 +32,20 @@
  * console.log(titleReport.valid); // true
  * console.log(batch.invalidCount); // 1
  * console.log(formatReport(report, { color: false }));
- * console.log(tree.type); // "message"
- * console.log(commit.summary?.scope); // "api"
- * console.log(header?.type); // "feat"
- * console.log(BUILTIN_LINT_RULES[0]?.name); // "header-pattern"
+ * console.log(formatBatchReport(batch, { color: false }));
+ * console.log(normalized); // “fix(api,parser): Add search”
+ * console.log(tree.type); // “message”
+ * console.log(commit.summary?.scopes[0]); // “api”
+ * console.log(header?.type); // “feat”
+ * console.log(BUILTIN_LINT_RULES[0]?.name); // “header-pattern”
  * console.log(rules.rules.find((rule) => rule.name === "type-enum")?.level);
- * // "error"
+ * // “error”
  * ```
  *
  * @module
  */
 export type {
+  AnalyzeOptions,
   CommitAnalysis,
   CommitAstNode,
   CommitFooter,
@@ -52,10 +58,13 @@ export type {
   CommitPoint,
   CommitPosition,
   CommitTypeDefinition,
+  FooterSchema,
+  FooterSchemaEntry,
   FormatOptions,
   LintBatchReport,
   LintBuiltinRuleDefinition,
   LintBuiltinRuleName,
+  LintEdit,
   LintIgnorePredicate,
   LintIssue,
   LintIssueLocation,
@@ -66,7 +75,10 @@ export type {
   LintRuleOptionValue,
   LintRulePlugin,
   LintRulesConfig,
+  LintSuggestion,
+  NormalizeOptions,
   ParsedHeader,
+  ParseHeaderOptions,
   ResolvedLintConfig,
   ResolvedLintRule,
   Severity,
@@ -75,6 +87,7 @@ export { DEFAULT_COMMIT_TYPES } from "./src/commit_types.ts";
 export { analyzeCommit } from "./src/analyze.ts";
 export { BUILTIN_LINT_RULES, resolveLintRules } from "./src/rules.ts";
 export { lintCommit, lintCommits, lintHeader } from "./src/lint.ts";
-export { formatReport } from "./src/format.ts";
+export { formatBatchReport, formatReport } from "./src/format.ts";
+export { normalizeCommit } from "./src/normalize.ts";
 export { parseHeader } from "./src/parse.ts";
 export { parseCommit } from "./src/parser.ts";

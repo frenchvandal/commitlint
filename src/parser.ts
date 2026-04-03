@@ -67,8 +67,8 @@ type WhitespaceNode = LiteralNode<"whitespace">;
  *   "feat(parser): add support for scopes\n\nRefs: #123",
  * );
  *
- * console.log(tree.type); // "message"
- * console.log(tree.children[0]?.type); // "summary"
+ * console.log(tree.type); // “message”
+ * console.log(tree.children[0]?.type); // “summary”
  * ```
  */
 export function parseCommit(input: string): CommitMessage {

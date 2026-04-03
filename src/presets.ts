@@ -30,11 +30,13 @@ type RequiredTokensRule = SeverityRule & {
 };
 
 export type LintPresetConfig = {
+  readonly typeEmpty: SeverityRule | undefined;
   readonly typeEnum: EnumRule | undefined;
   readonly typeCase: SeverityRule | undefined;
   readonly scopeEnum: EnumRule | undefined;
   readonly scopeCase: SeverityRule | undefined;
   readonly scopeEmpty: SeverityRule | undefined;
+  readonly subjectEmpty: SeverityRule | undefined;
   readonly subjectCase: SeverityRule | undefined;
   readonly subjectFullStop: SeverityRule | undefined;
   readonly headerMaxLength: MaxLengthRule | undefined;
@@ -54,11 +56,13 @@ export const DEFAULT_LINT_PRESET: LintPreset = "conventional-commits";
 
 export const LINT_PRESET_CONFIGS = {
   "conventional-commits": {
+    typeEmpty: ERROR,
     typeEnum: undefined,
     typeCase: undefined,
     scopeEnum: undefined,
     scopeCase: undefined,
     scopeEmpty: undefined,
+    subjectEmpty: ERROR,
     subjectCase: undefined,
     subjectFullStop: undefined,
     headerMaxLength: undefined,
@@ -71,6 +75,7 @@ export const LINT_PRESET_CONFIGS = {
     breakingChangeDescriptionRequired: undefined,
   },
   "commitlint": {
+    typeEmpty: ERROR,
     typeEnum: {
       ...ERROR,
       allowed: DEFAULT_COMMIT_TYPES.map((type) => type.name),
@@ -80,6 +85,7 @@ export const LINT_PRESET_CONFIGS = {
     scopeEnum: undefined,
     scopeCase: undefined,
     scopeEmpty: undefined,
+    subjectEmpty: ERROR,
     subjectCase: ERROR,
     subjectFullStop: ERROR,
     headerMaxLength: {

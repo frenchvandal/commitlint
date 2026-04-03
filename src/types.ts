@@ -27,11 +27,13 @@ export type LintPreset = "conventional-commits" | "commitlint";
 export type LintBuiltinRuleName =
   | "header-pattern"
   | "header-trim"
+  | "type-empty"
   | "type-enum"
   | "type-case"
   | "scope-enum"
   | "scope-case"
   | "scope-empty"
+  | "subject-empty"
   | "subject-case"
   | "subject-full-stop"
   | "header-max-length"
@@ -65,6 +67,26 @@ export type LintIssueLocation = {
   readonly length?: number;
 };
 
+/** A source edit that can be applied to the cleaned commit message. */
+export type LintEdit = {
+  /** The 1-based line number in the cleaned commit message. */
+  readonly line: number;
+  /** The 1-based column number in the cleaned commit message. */
+  readonly column: number;
+  /** The number of characters to replace. */
+  readonly length: number;
+  /** The replacement text to apply at the edit location. */
+  readonly replacement: string;
+};
+
+/** A structured suggestion attached to a lint issue. */
+export type LintSuggestion = {
+  /** A human-readable summary of the suggested change. */
+  readonly message: string;
+  /** An optional machine-applicable edit for the cleaned commit message. */
+  readonly edit?: LintEdit;
+};
+
 /** A single lint issue emitted by the validator. */
 export type LintIssue = {
   /** The stable rule identifier, such as `type-enum`. */
@@ -75,6 +97,8 @@ export type LintIssue = {
   readonly message: string;
   /** The structured location of the issue in the cleaned commit message, when available. */
   readonly location?: LintIssueLocation;
+  /** Structured suggestions or fixes associated with the issue, when available. */
+  readonly suggestions?: ReadonlyArray<LintSuggestion>;
 };
 
 /** A parsed footer token captured from the commit footer block. */
@@ -119,6 +143,8 @@ export type LintReport = {
   readonly warnings: ReadonlyArray<LintIssue>;
   /** The semantic commit analysis used during linting, when available. */
   readonly analysis?: CommitAnalysis;
+  /** An optional documentation URL that can help explain the configured policy. */
+  readonly helpUrl?: string;
 };
 
 /** Primitive option values surfaced by {@link resolveLintRules}. */
@@ -172,10 +198,37 @@ export type LintBatchReport = {
   readonly warningCount: number;
   /** The per-message lint reports in input order. */
   readonly reports: ReadonlyArray<LintReport>;
+  /** An optional documentation URL copied to every report in the batch. */
+  readonly helpUrl?: string;
 };
+
+/** A schema entry used to validate a specific footer token. */
+export type FooterSchemaEntry = {
+  /** The footer token to validate, such as `Refs` or `Reviewed-by`. */
+  readonly token: string;
+  /** The severity used when this schema entry emits an issue. */
+  readonly level?: LintRuleLevel;
+  /** Whether at least one matching footer token must be present. */
+  readonly required?: boolean;
+  /** Whether the token may appear more than once. Defaults to `true`. */
+  readonly multiple?: boolean;
+  /** Whether each matching footer token must have a non-empty value. */
+  readonly requireValue?: boolean;
+  /** An optional regular expression applied to each matching footer value. */
+  readonly valuePattern?: RegExp;
+  /** A human-readable description for `valuePattern`, used in error messages. */
+  readonly valueDescription?: string;
+};
+
+/** A lightweight schema applied to commit footer tokens after built-in rules. */
+export type FooterSchema = ReadonlyArray<FooterSchemaEntry>;
 
 /** Typed overrides for the built-in lint rules. */
 export type LintRulesConfig = {
+  /** Override the `type-empty` rule. */
+  readonly "type-empty"?: {
+    readonly level?: LintRuleLevel;
+  };
   /** Override the `type-enum` rule. */
   readonly "type-enum"?: {
     readonly level?: LintRuleLevel;
@@ -198,6 +251,10 @@ export type LintRulesConfig = {
   };
   /** Override the `scope-empty` rule. */
   readonly "scope-empty"?: {
+    readonly level?: LintRuleLevel;
+  };
+  /** Override the `subject-empty` rule. */
+  readonly "subject-empty"?: {
     readonly level?: LintRuleLevel;
   };
   /** Override the `subject-case` rule. */
@@ -257,16 +314,45 @@ export type LintRulePlugin = (
 /** A predicate that can skip linting for matching commit messages. */
 export type LintIgnorePredicate = (commit: CommitAnalysis) => boolean;
 
+/** Options for parsing scope lists in commit headers. */
+export type ParseHeaderOptions = {
+  /**
+   * Delimiters used to split multi-scope headers such as `feat(api,parser): add search`.
+   *
+   * Defaults to `[","]`.
+   */
+  readonly scopeDelimiters?: ReadonlyArray<string>;
+};
+
+/** Options for {@link analyzeCommit}. */
+export type AnalyzeOptions = ParseHeaderOptions;
+
+/** Options for {@link normalizeCommit}. */
+export type NormalizeOptions = ParseHeaderOptions & {
+  /**
+   * The delimiter used when rebuilding multi-scope headers.
+   *
+   * Defaults to `","`.
+   */
+  readonly preferredScopeDelimiter?: string;
+  /**
+   * Whether a trailing full stop should be removed from the subject.
+   *
+   * Defaults to `true`.
+   */
+  readonly removeSubjectFullStop?: boolean;
+};
+
 /** Options for {@link lintCommit}. */
-export type LintOptions = {
+export type LintOptions = ParseHeaderOptions & {
   /**
    * The built-in rule preset to apply.
    *
    * Available presets:
-   * - `"conventional-commits"`: the default specification-focused rules
-   * - `"commitlint"`: mirrors `@commitlint/config-conventional`
+   * - `conventional-commits`: the default specification-focused rules
+   * - `commitlint`: mirrors `@commitlint/config-conventional`
    *
-   * Defaults to `"conventional-commits"`.
+   * Defaults to `conventional-commits`.
    */
   readonly preset?: LintPreset;
   /**
@@ -275,9 +361,15 @@ export type LintOptions = {
    * Rules are merged on top of the selected preset. Set `level: "off"` to
    * disable a rule. When an override enables a rule that is inactive in the
    * selected preset and omits `level`, the rule falls back to the default
-   * severity used by the `"commitlint"` preset.
+   * severity used by the `commitlint` preset.
    */
   readonly rules?: LintRulesConfig;
+  /**
+   * An optional documentation URL surfaced in reports and formatted output.
+   *
+   * This is useful for CI messages, contribution guides, or custom policy docs.
+   */
+  readonly helpUrl?: string;
   /**
    * Whether the built-in ignore predicates should skip special workflow commits.
    *
@@ -301,14 +393,23 @@ export type LintOptions = {
    * additional issues.
    */
   readonly plugins?: ReadonlyArray<LintRulePlugin>;
+  /**
+   * Optional footer schema validation applied after the built-in rules.
+   *
+   * This is useful for trailer policies such as required tracking IDs,
+   * reviewer sign-offs, or token-specific value formats.
+   */
+  readonly footerSchema?: FooterSchema;
 };
 
 /** Parsed data extracted from the commit header. */
 export type ParsedHeader = {
   /** The commit type, such as `feat` or `fix`. */
   readonly type: string;
-  /** The optional scope captured from the header. */
+  /** The optional raw scope text captured from the header. */
   readonly scope: string | undefined;
+  /** The normalized scope list derived from {@link scope}. */
+  readonly scopes: ReadonlyArray<string>;
   /** Whether the header contains the `!` breaking-change marker. */
   readonly breaking: boolean;
   /** The subject portion of the commit header. */

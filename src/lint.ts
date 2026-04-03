@@ -8,15 +8,17 @@ import { CASED_LETTER_PATTERN } from "./constants.ts";
 import { resolveLintConfig } from "./_internal/lint_config.ts";
 import type { CommitSections, ParsedCommitFooter } from "./message.ts";
 import { parseFooterLinesWithOffsets, splitCommitMessage } from "./message.ts";
-import { parseHeader } from "./parse.ts";
+import { parseHeader, splitScopeSegments } from "./parse.ts";
 import type {
   CommitAnalysis,
+  FooterSchemaEntry,
   LintBatchReport,
   LintIgnorePredicate,
   LintIssue,
   LintIssueLocation,
   LintOptions,
   LintReport,
+  LintSuggestion,
 } from "./types.ts";
 
 const DEFAULT_IGNORE_PREDICATES: ReadonlyArray<LintIgnorePredicate> = [
@@ -25,6 +27,11 @@ const DEFAULT_IGNORE_PREDICATES: ReadonlyArray<LintIgnorePredicate> = [
   (commit) => /^Merge\b/u.test(commit.header),
   (commit) => /^Revert\b/u.test(commit.header),
 ];
+
+const SUBJECT_EMPTY_HEADER_PATTERN =
+  /^(?<type>[A-Za-z][A-Za-z-]*)(?:\((?<scope>[^()]+)\))?(?<breaking>!)?:[ \t]*$/u;
+const TYPE_EMPTY_HEADER_PATTERN =
+  /^(?:\((?<scope>[^()]+)\))?(?<breaking>!)?:[ \t]*\S.*$/u;
 
 function hasDisallowedSubjectCase(subject: string): boolean {
   const trimmed = subject.trimStart();
@@ -42,8 +49,9 @@ function addIssue(
   severity: LintIssue["severity"],
   message: string,
   location?: LintIssueLocation,
+  suggestions?: ReadonlyArray<LintSuggestion>,
 ): void {
-  issues.push({ rule, severity, message, location });
+  issues.push({ rule, severity, message, location, suggestions });
 }
 
 function levenshteinDistance(left: string, right: string): number {
@@ -121,6 +129,21 @@ function headerLocation(header: string): LintIssueLocation {
   };
 }
 
+function headerEdit(
+  location: LintIssueLocation,
+  replacement: string,
+): LintSuggestion {
+  return {
+    message: `Replace with “${replacement}”.`,
+    edit: {
+      line: location.line,
+      column: location.column,
+      length: location.length ?? 0,
+      replacement,
+    },
+  };
+}
+
 function subjectColumn(
   header: string,
   parsed: { readonly subject: string },
@@ -129,12 +152,28 @@ function subjectColumn(
   return index === -1 ? 1 : index + 1;
 }
 
-function scopeColumn(parsed: {
-  readonly type: string;
-  readonly scope: string | undefined;
-}): number {
-  if (parsed.scope === undefined) return 1;
-  return parsed.type.length + 2;
+function scopeLocations(
+  parsed: {
+    readonly type: string;
+    readonly scope: string | undefined;
+  },
+  options: LintOptions,
+): ReadonlyArray<
+  { readonly value: string; readonly location: LintIssueLocation }
+> {
+  if (parsed.scope === undefined) return [];
+
+  const segments = splitScopeSegments(parsed.scope, options) ?? [];
+
+  return segments.map((segment) => ({
+    value: segment.value,
+    location: {
+      section: "header",
+      line: 1,
+      column: parsed.type.length + 2 + segment.start,
+      length: Math.max(segment.length, 1),
+    },
+  }));
 }
 
 function footerTokenLocation(
@@ -147,6 +186,141 @@ function footerTokenLocation(
     column: 1,
     length: Math.max(token.length, 1),
   };
+}
+
+function appendSuggestionMessage(
+  message: string,
+  suggestion: string | undefined,
+): string {
+  return suggestion === undefined
+    ? message
+    : `${message} Did you mean “${suggestion}”?`;
+}
+
+function detectHeaderShapeIssue(
+  header: string,
+): {
+  readonly rule: "type-empty" | "subject-empty";
+  readonly message: string;
+  readonly location: LintIssueLocation;
+  readonly suggestions?: ReadonlyArray<LintSuggestion>;
+} | undefined {
+  if (header.length === 0) return undefined;
+
+  if (SUBJECT_EMPTY_HEADER_PATTERN.test(header)) {
+    return {
+      rule: "subject-empty",
+      message: "Subject is required.",
+      location: {
+        section: "header",
+        line: 1,
+        column: header.length + 1,
+        length: 1,
+      },
+      suggestions: [{
+        message: "Add a short description after the colon.",
+      }],
+    };
+  }
+
+  if (TYPE_EMPTY_HEADER_PATTERN.test(header)) {
+    return {
+      rule: "type-empty",
+      message: "Type is required.",
+      location: {
+        section: "header",
+        line: 1,
+        column: 1,
+        length: 1,
+      },
+      suggestions: [{
+        message: "Add a type such as “feat” or “fix” before the colon.",
+      }],
+    };
+  }
+
+  return undefined;
+}
+
+function applyFooterSchema(
+  issues: LintIssue[],
+  footerEntries: ReadonlyArray<ParsedCommitFooter>,
+  footerStart: number | undefined,
+  schema: ReadonlyArray<FooterSchemaEntry>,
+): void {
+  for (const entry of schema) {
+    const severity = entry.level ?? "error";
+    if (severity === "off") continue;
+
+    const matchingFooters = footerEntries.filter((footer) =>
+      footer.token === entry.token
+    );
+
+    if (entry.required === true && matchingFooters.length === 0) {
+      addIssue(
+        issues,
+        "footer-schema",
+        severity,
+        `Footer token “${entry.token}” is required.`,
+        undefined,
+        [{
+          message: `Add a “${entry.token}: ” footer.`,
+        }],
+      );
+    }
+
+    if (entry.multiple === false && matchingFooters.length > 1) {
+      const duplicate = matchingFooters[1];
+      const lineNumber = footerStart === undefined || duplicate === undefined
+        ? 1
+        : footerStart + duplicate.lineOffset + 1;
+
+      addIssue(
+        issues,
+        "footer-schema",
+        severity,
+        `Footer token “${entry.token}” must appear at most once.`,
+        footerTokenLocation(lineNumber, entry.token),
+      );
+    }
+
+    for (const footer of matchingFooters) {
+      const lineNumber = footerStart === undefined
+        ? footer.lineOffset + 1
+        : footerStart + footer.lineOffset + 1;
+      const valueLocation = {
+        section: "footer" as const,
+        line: lineNumber,
+        column: footer.token.length + footer.separator.length + 1,
+        length: Math.max(footer.value.length, 1),
+      };
+
+      if (entry.requireValue === true && footer.value.trim().length === 0) {
+        addIssue(
+          issues,
+          "footer-schema",
+          severity,
+          `Footer token “${entry.token}” requires a non-empty value.`,
+          valueLocation,
+        );
+      }
+
+      if (
+        entry.valuePattern !== undefined &&
+        !entry.valuePattern.test(footer.value)
+      ) {
+        addIssue(
+          issues,
+          "footer-schema",
+          severity,
+          `Footer token “${entry.token}” value must match ${
+            entry.valueDescription ?? entry.valuePattern
+          }.`,
+          valueLocation,
+        );
+      }
+    }
+  }
 }
 
 function buildCommitAnalysis(
@@ -251,6 +425,7 @@ export function lintCommits(
     errorCount,
     warningCount,
     reports,
+    helpUrl: options.helpUrl,
   };
 }
 
@@ -283,7 +458,7 @@ export function lintCommit(
   const { body, bodyStart, cleaned, footer, footerStart, header, lines } =
     splitCommitMessage(input);
   const trimmedHeader = header.trim();
-  const parsed = parseHeader(header);
+  const parsed = parseHeader(trimmedHeader, options);
   const footerEntries = parseFooterLinesWithOffsets(footer);
   const analysis = buildCommitAnalysis(
     {
@@ -311,16 +486,19 @@ export function lintCommit(
       errors: [],
       warnings: [],
       analysis,
+      helpUrl: options.helpUrl,
     };
   }
 
   if (header !== trimmedHeader) {
+    const location = headerLocation(header);
     addIssue(
       issues,
       "header-trim",
       "error",
       "Header must not have leading or trailing whitespace.",
-      headerLocation(header),
+      location,
+      [headerEdit(location, trimmedHeader)],
     );
   }
 
@@ -344,13 +522,37 @@ export function lintCommit(
   }
 
   if (parsed === undefined) {
-    addIssue(
-      issues,
-      "header-pattern",
-      "error",
-      `Header does not match Conventional Commits format: "<type>[optional scope]: <description>". Got: "${header}"`,
-      headerLocation(header),
-    );
+    const headerIssue = detectHeaderShapeIssue(trimmedHeader);
+
+    if (headerIssue?.rule === "type-empty" && rules.typeEmpty !== undefined) {
+      addIssue(
+        issues,
+        headerIssue.rule,
+        rules.typeEmpty.severity,
+        headerIssue.message,
+        headerIssue.location,
+        headerIssue.suggestions,
+      );
+    } else if (
+      headerIssue?.rule === "subject-empty" && rules.subjectEmpty !== undefined
+    ) {
+      addIssue(
+        issues,
+        headerIssue.rule,
+        rules.subjectEmpty.severity,
+        headerIssue.message,
+        headerIssue.location,
+        headerIssue.suggestions,
+      );
+    } else {
+      addIssue(
+        issues,
+        "header-pattern",
+        "error",
+        `Header does not match Conventional Commits format: “<type>[optional scope]: <description>”. Got: “${header}”`,
+        headerLocation(header),
+      );
+    }
   } else {
     if (
       rules.typeEnum !== undefined &&
@@ -359,23 +561,27 @@ export function lintCommit(
       const suggestion = rules.typeEnum.suggest
         ? getClosestAllowedValue(parsed.type, rules.typeEnum.allowed)
         : undefined;
-      const suggestionMessage = suggestion === undefined
-        ? ""
-        : ` Did you mean "${suggestion}"?`;
+      const location = {
+        section: "header" as const,
+        line: 1,
+        column: 1,
+        length: Math.max(parsed.type.length, 1),
+      };
 
       addIssue(
         issues,
         "type-enum",
         rules.typeEnum.severity,
-        `Type "${parsed.type}" is not allowed. Allowed types: ${
-          rules.typeEnum.allowed.join(", ")
-        }.${suggestionMessage}`,
-        {
-          section: "header",
-          line: 1,
-          column: 1,
-          length: Math.max(parsed.type.length, 1),
-        },
+        appendSuggestionMessage(
+          `Type “${parsed.type}” is not allowed. Allowed types: ${
+            rules.typeEnum.allowed.join(", ")
+          }.`,
+          suggestion,
+        ),
+        location,
+        suggestion === undefined
+          ? undefined
+          : [headerEdit(location, suggestion)],
       );
     }
 
@@ -383,17 +589,20 @@ export function lintCommit(
       rules.typeCase !== undefined &&
       parsed.type !== parsed.type.toLowerCase()
     ) {
+      const location = {
+        section: "header" as const,
+        line: 1,
+        column: 1,
+        length: Math.max(parsed.type.length, 1),
+      };
+
       addIssue(
         issues,
         "type-case",
         rules.typeCase.severity,
-        `Type "${parsed.type}" must be lower-case.`,
-        {
-          section: "header",
-          line: 1,
-          column: 1,
-          length: Math.max(parsed.type.length, 1),
-        },
+        `Type “${parsed.type}” must be lower-case.`,
+        location,
+        [headerEdit(location, parsed.type.toLowerCase())],
       );
     }
 
@@ -412,70 +621,75 @@ export function lintCommit(
       );
     }
 
-    if (
-      rules.scopeEnum !== undefined &&
-      parsed.scope !== undefined &&
-      !rules.scopeEnum.allowed.some((allowedScope) =>
-        allowedScope === parsed.scope
-      )
-    ) {
-      const suggestion = rules.scopeEnum.suggest
-        ? getClosestAllowedValue(parsed.scope, rules.scopeEnum.allowed)
-        : undefined;
-      const suggestionMessage = suggestion === undefined
-        ? ""
-        : ` Did you mean "${suggestion}"?`;
+    for (const scoped of scopeLocations(parsed, options)) {
+      if (
+        rules.scopeEnum !== undefined &&
+        !rules.scopeEnum.allowed.some((allowedScope) =>
+          allowedScope === scoped.value
+        )
+      ) {
+        const suggestion = rules.scopeEnum.suggest
+          ? getClosestAllowedValue(scoped.value, rules.scopeEnum.allowed)
+          : undefined;
 
-      addIssue(
-        issues,
-        "scope-enum",
-        rules.scopeEnum.severity,
-        `Scope "${parsed.scope}" is not allowed. Allowed scopes: ${
-          rules.scopeEnum.allowed.join(", ")
-        }.${suggestionMessage}`,
-        {
-          section: "header",
-          line: 1,
-          column: scopeColumn(parsed),
-          length: Math.max(parsed.scope.length, 1),
-        },
-      );
-    }
+        addIssue(
+          issues,
+          "scope-enum",
+          rules.scopeEnum.severity,
+          appendSuggestionMessage(
+            `Scope “${scoped.value}” is not allowed. Allowed scopes: ${
+              rules.scopeEnum.allowed.join(", ")
+            }.`,
+            suggestion,
+          ),
+          scoped.location,
+          suggestion === undefined
+            ? undefined
+            : [headerEdit(scoped.location, suggestion)],
+        );
+      }
 
-    if (
-      rules.scopeCase !== undefined &&
-      parsed.scope !== undefined &&
-      parsed.scope !== parsed.scope.toLowerCase()
-    ) {
-      addIssue(
-        issues,
-        "scope-case",
-        rules.scopeCase.severity,
-        `Scope "${parsed.scope}" must be lower-case.`,
-        {
-          section: "header",
-          line: 1,
-          column: scopeColumn(parsed),
-          length: Math.max(parsed.scope.length, 1),
-        },
-      );
+      if (
+        rules.scopeCase !== undefined &&
+        scoped.value !== scoped.value.toLowerCase()
+      ) {
+        addIssue(
+          issues,
+          "scope-case",
+          rules.scopeCase.severity,
+          `Scope “${scoped.value}” must be lower-case.`,
+          scoped.location,
+          [headerEdit(scoped.location, scoped.value.toLowerCase())],
+        );
+      }
     }
 
     if (
       rules.subjectFullStop !== undefined &&
       parsed.subject.trimEnd().endsWith(".")
     ) {
+      const location = {
+        section: "header" as const,
+        line: 1,
+        column: trimmedHeader.length,
+        length: 1,
+      };
+
       addIssue(
         issues,
         "subject-full-stop",
         rules.subjectFullStop.severity,
-        'Subject must not end with a full stop (".").',
-        {
-          section: "header",
-          line: 1,
-          column: header.trimEnd().length,
-          length: 1,
-        },
+        "Subject must not end with a full stop (“.”).",
+        location,
+        [{
+          message: "Remove the trailing full stop.",
+          edit: {
+            line: location.line,
+            column: location.column,
+            length: 1,
+            replacement: "",
+          },
+        }],
       );
     }
 
@@ -491,9 +705,12 @@ export function lintCommit(
         {
           section: "header",
           line: 1,
-          column: subjectColumn(header, parsed),
+          column: subjectColumn(trimmedHeader, parsed),
           length: Math.max(parsed.subject.length, 1),
         },
+        [{
+          message: "Start the subject in lower case.",
+        }],
       );
     }
   }
@@ -587,18 +804,22 @@ export function lintCommit(
       const suggestion = rules.footerTokenEnum.suggest
         ? getClosestAllowedValue(entry.token, rules.footerTokenEnum.allowed)
         : undefined;
-      const suggestionMessage = suggestion === undefined
-        ? ""
-        : ` Did you mean "${suggestion}"?`;
       const lineNumber = footerStart + entry.lineOffset + 1;
+      const location = footerTokenLocation(lineNumber, entry.token);
       addIssue(
         issues,
         "footer-token-enum",
         rules.footerTokenEnum.severity,
-        `Footer token "${entry.token}" is not allowed. Allowed tokens: ${
-          rules.footerTokenEnum.allowed.join(", ")
-        }.${suggestionMessage}`,
-        footerTokenLocation(lineNumber, entry.token),
+        appendSuggestionMessage(
+          `Footer token “${entry.token}” is not allowed. Allowed tokens: ${
+            rules.footerTokenEnum.allowed.join(", ")
+          }.`,
+          suggestion,
+        ),
+        location,
+        suggestion === undefined
+          ? undefined
+          : [headerEdit(location, suggestion)],
       );
     }
   }
@@ -617,7 +838,17 @@ export function lintCommit(
       `Commit must include at least one footer token from: ${
         rules.footerTokenRequired.tokens.join(", ")
       }.`,
+      undefined,
+      [{
+        message: `Add one of these footer tokens: ${
+          rules.footerTokenRequired.tokens.join(", ")
+        }.`,
+      }],
     );
+  }
+
+  if (options.footerSchema !== undefined) {
+    applyFooterSchema(issues, footerEntries, footerStart, options.footerSchema);
   }
 
   if (rules.breakingChangeDescriptionRequired !== undefined) {
@@ -675,5 +906,6 @@ export function lintCommit(
     errors,
     warnings,
     analysis,
+    helpUrl: options.helpUrl,
   };
 }

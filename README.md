@@ -9,13 +9,19 @@ Cloudflare Workers.
 - Keeps a zero-dependency, 100% TypeScript runtime surface.
 - Parses commit messages into a syntax tree with source positions.
 - Analyzes commit messages into semantic sections without throwing.
+- Parses and validates comma-delimited multi-scope headers such as
+  `feat(api,parser): ...`.
 - Lints commit headers directly for PR title and squash-title workflows.
 - Lints batches of commit messages without depending on Git or a runtime.
 - Defaults to the core Conventional Commits specification.
 - Provides an optional `commitlint` preset that mirrors
   `@commitlint/config-conventional`.
 - Supports typed rule overrides for scopes and footer tokens.
+- Exposes structured suggestions and machine-applicable edits in lint issues.
+- Supports token-specific footer schemas for required trailers and value
+  formats.
 - Supports opt-in ignore policies for workflow commits such as `fixup!`.
+- Provides best-effort commit normalization for editor and automation flows.
 - Exports built-in commit type metadata for editor and UI integrations.
 - Exposes built-in lint rule metadata and resolved preset configs.
 - Supports custom lint callbacks with no runtime dependencies.
@@ -42,10 +48,12 @@ import {
   analyzeCommit,
   BUILTIN_LINT_RULES,
   DEFAULT_COMMIT_TYPES,
+  formatBatchReport,
   formatReport,
   lintCommit,
   lintCommits,
   lintHeader,
+  normalizeCommit,
   parseCommit,
   parseHeader,
   resolveLintRules,
@@ -56,6 +64,7 @@ const titleReport = lintHeader("feat(api): add search");
 const batch = lintCommits(["feat: add search", "wip: ship it"], {
   preset: "commitlint",
 });
+const normalized = normalizeCommit(" Fix(API, Parser): Add search. ");
 const tree = parseCommit("feat(api): add search");
 const commit = analyzeCommit("feat(api)!: add search\n\nRefs: #123");
 const header = parseHeader("feat(api): add search");
@@ -65,14 +74,16 @@ console.log(report.valid); // true
 console.log(titleReport.valid); // true
 console.log(batch.invalidCount); // 1
 console.log(formatReport(report));
-console.log(tree.children[0]?.type); // "summary"
-console.log(commit.footers[0]?.token); // "Refs"
-console.log(header?.scope); // "api"
+console.log(formatBatchReport(batch));
+console.log(normalized); // “fix(api,parser): Add search”
+console.log(tree.children[0]?.type); // “summary”
+console.log(commit.footers[0]?.token); // “Refs”
+console.log(header?.scopes); // [“api”]
 console.log(DEFAULT_COMMIT_TYPES.find((type) => type.name === "feat")?.name);
-// "feat"
-console.log(BUILTIN_LINT_RULES[0]?.name); // "header-pattern"
+// “feat”
+console.log(BUILTIN_LINT_RULES[0]?.name); // “header-pattern”
 console.log(rules.rules.find((rule) => rule.name === "type-enum")?.level);
-// "error"
+// “error”
 ```
 
 Use typed rule overrides on top of a preset:
@@ -93,8 +104,8 @@ const report = lintCommit("feature(ui): add search.", {
 });
 
 console.log(report.valid); // false
-console.log(report.errors[0]?.rule); // "scope-enum"
-console.log(report.errors[1]?.rule); // "footer-token-required"
+console.log(report.errors[0]?.rule); // “scope-enum”
+console.log(report.errors[1]?.rule); // “footer-token-required”
 ```
 
 Add a custom lint callback with no runtime dependencies:
@@ -118,7 +129,7 @@ const report = lintCommit("feat: add search", {
   ],
 });
 
-console.log(report.warnings[0]?.rule); // "refs-required"
+console.log(report.warnings[0]?.rule); // “refs-required”
 ```
 
 Ignore workflow commits without changing your lint rules:
@@ -144,7 +155,7 @@ const report = lintHeader("feat(api): add search.", {
 });
 
 console.log(report.valid); // false
-console.log(report.errors[0]?.rule); // "subject-full-stop"
+console.log(report.errors[0]?.rule); // “subject-full-stop”
 ```
 
 Lint multiple commit messages in one pass:
@@ -166,6 +177,44 @@ console.log(batch.ignoredCount); // 1
 console.log(batch.invalidCount); // 1
 ```
 
+Validate multi-scope headers and consume structured suggestions:
+
+```ts
+import { lintCommit } from "jsr:@miscellaneous/commitlint";
+
+const report = lintCommit("feature(API, docs): Add search.", {
+  preset: "commitlint",
+  rules: {
+    "scope-enum": {
+      allowedScopes: ["api", "parser"],
+    },
+  },
+});
+
+console.log(report.analysis?.summary?.scopes); // [“API”, “docs”]
+console.log(report.errors[0]?.suggestions?.[0]?.edit?.replacement); // “feat”
+console.log(report.errors[1]?.suggestions?.[0]?.edit?.replacement); // “api”
+```
+
+Apply footer-schema validation for trailers:
+
+```ts
+import { lintCommit } from "jsr:@miscellaneous/commitlint";
+
+const report = lintCommit("feat: add search\n\nRefs: abc", {
+  footerSchema: [{
+    token: "Refs",
+    required: true,
+    requireValue: true,
+    valuePattern: /^#\\d+$/u,
+    valueDescription: '"#<number>"',
+  }],
+});
+
+console.log(report.valid); // false
+console.log(report.errors[0]?.rule); // “footer-schema”
+```
+
 Inspect the effective built-in rules for a preset:
 
 ```ts
@@ -181,9 +230,9 @@ const resolved = resolveLintRules({
   },
 });
 
-console.log(resolved.preset); // "commitlint"
+console.log(resolved.preset); // “commitlint”
 console.log(resolved.rules.find((rule) => rule.name === "scope-enum")?.level);
-// "warning"
+// “warning”
 ```
 
 Parse a message without applying lint rules:
@@ -195,9 +244,9 @@ const tree = parseCommit(
   "feat(parser)!: add support for scopes\n\nBREAKING CHANGE: API changed",
 );
 
-console.log(tree.type); // "message"
+console.log(tree.type); // “message”
 console.log(tree.children.map((node) => node.type));
-// ["summary", "newline", "footer"]
+// [“summary”, “newline”, “footer”]
 ```
 
 `parseCommit()` is structural and throws on syntax errors. `analyzeCommit()` is
@@ -207,6 +256,9 @@ validation.
 
 Footer tokens accept either `:` or the git-style `space + #` separator, so both
 `Refs: #123` and `Refs #123` are recognized.
+
+`LintIssue.suggestions` may include machine-applicable edits for callers that
+want to build editor actions, autofix previews, or bot comments.
 
 When you configure `footer-token-enum`, include any breaking-change tokens you
 want to allow explicitly, such as `BREAKING CHANGE` or `BREAKING-CHANGE`.
@@ -235,6 +287,12 @@ Available presets:
 - `ignores`: custom predicates that can short-circuit linting for matching
   messages.
 - `plugins`: pure TypeScript callbacks that can emit additional issues.
+- `footerSchema`: token-specific trailer validation for required footers,
+  duplicate prevention, non-empty values, and value patterns.
+- `helpUrl`: an optional documentation URL copied into reports and formatted
+  output.
+- `scopeDelimiters`: optional delimiters used to split multi-scope headers. The
+  default is `[,]`.
 
 When a message matches an ignore predicate, `LintReport.ignored` is `true` and
 the report is returned as valid without running rules or plugins.
@@ -255,7 +313,11 @@ history access to wrappers and caller code.
 
 Format a lint report for terminal output.
 
-### `analyzeCommit(input: string): CommitAnalysis`
+### `formatBatchReport(report: LintBatchReport, options?: { color?: boolean }): string`
+
+Format a batch lint report for terminal output.
+
+### `analyzeCommit(input: string, options?: AnalyzeOptions): CommitAnalysis`
 
 Analyze a commit message into semantic sections without applying lint rules.
 
@@ -276,9 +338,14 @@ Resolve the effective built-in lint rules for a preset and override set. This is
 useful for wrappers, UIs, and tests that need to inspect the final built-in rule
 configuration before linting.
 
-### `parseHeader(input: string): ParsedHeader | undefined`
+### `normalizeCommit(input: string, options?: NormalizeOptions): string`
 
-Parse only the commit header into its semantic fields.
+Normalize a commit message without applying lint rules.
+
+### `parseHeader(input: string, options?: ParseHeaderOptions): ParsedHeader | undefined`
+
+Parse only the commit header into its semantic fields, including `scopes` for
+multi-scope headers.
 
 ### `parseCommit(input: string): CommitMessage`
 
